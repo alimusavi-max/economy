@@ -1,0 +1,15 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+# SQLAlchemy 2.0 برای دیتابیس
+sqlalchemy>=2.0.27
+asyncpg>=0.29.0
+alembic>=1.13.1
+# Pydantic V2 برای اعتبارسنجی سریع دیتا
+pydantic>=2.6.3
+pydantic-settings>=2.2.1
+# برای دریافت دیتا از APIها
+requests>=2.31.0
+yfinance>=0.2.36
+# برای زمان‌بندی کارهای خودکار (آپدیت روزانه دیتا)
+apscheduler>=3.10.4
+python-dotenv>=1.0.1
