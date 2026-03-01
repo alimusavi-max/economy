@@ -1,28 +1,54 @@
 import yfinance as yf
 import asyncio
+from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from database.models import AssetMarketData
+from database.models import AssetMarketData, Indicator
 
 async def fetch_and_store_market_data(session: AsyncSession, symbol: str):
     """
-    دریافت دیتای تاریخی یک نماد مالی (سهام، جفت ارز، کریپتو) از یاهو فایننس
-    و ذخیره هوشمند در دیتابیس
+    دریافت دیتای تاریخی یک نماد مالی واقعی از یاهو فایننس
+    و ثبت خودکار آن در داشبورد
     """
     print(f"در حال دریافت دیتای بازار برای نماد {symbol}...")
     
-    # از آنجایی که yfinance ناهمگام (Async) نیست، آن را در یک Thread جداگانه اجرا می‌کنیم 
-    # تا در زمان دانلود دیتای سنگین، کل سرور ما قفل نشود
     ticker = yf.Ticker(symbol)
-    hist = await asyncio.to_thread(ticker.history, period="max") # دریافت کل تاریخچه ممکن
+    hist = await asyncio.to_thread(ticker.history, period="max")
     
     if hist.empty:
-        return {"success": False, "message": f"دیتایی برای نماد {symbol} یافت نشد. آیا نماد درست است؟"}
+        return {"success": False, "message": f"دیتایی برای نماد {symbol} یافت نشد. آیا مطمئنید این نماد در سایت وجود دارد؟"}
+        
+    # --- بخش جدید: ثبت نماد واقعی در داشبورد (جدول Indicator) ---
+    result = await session.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    
+    if not indicator:
+        # تلاش برای پیدا کردن نام واقعی شرکت از سایت
+        try:
+            info = await asyncio.to_thread(lambda: ticker.info)
+            company_name = info.get("shortName", symbol.upper()) if isinstance(info, dict) else symbol.upper()
+        except:
+            company_name = symbol.upper()
+            
+        indicator = Indicator(
+            symbol=symbol.upper(), 
+            name=company_name, 
+            source="YAHOO", 
+            frequency="Daily", 
+            update_interval_days=1,
+            last_updated=date.today()
+        )
+        session.add(indicator)
+        await session.commit()
+    else:
+        indicator.last_updated = date.today()
+        session.add(indicator)
+        await session.commit()
+    # -------------------------------------------------------------
         
     records_to_insert = []
-    # تبدیل داده‌های دریافت شده به فرمت دیتابیس خودمان
     for index, row in hist.iterrows():
-        # گاهی دیتای یاهو شامل ساعت هم هست، ما فقط تاریخ (Date) را می‌خواهیم
         date_obj = index.date() if hasattr(index, 'date') else index
         
         records_to_insert.append({
@@ -32,7 +58,6 @@ async def fetch_and_store_market_data(session: AsyncSession, symbol: str):
             "volume": float(row["Volume"])
         })
         
-    # ذخیره در دیتابیس با قابلیت رد کردن داده‌های تکراری (ON CONFLICT DO NOTHING)
     stmt = insert(AssetMarketData).values(records_to_insert)
     stmt = stmt.on_conflict_do_nothing(index_elements=['symbol', 'date'])
     

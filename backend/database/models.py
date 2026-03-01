@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, List
-from sqlalchemy import ForeignKey, String, Date, Float, DateTime, Index
+from sqlalchemy import ForeignKey, String, Date, Float, DateTime, Index, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
@@ -13,17 +13,19 @@ class Indicator(Base):
     __tablename__ = "indicators"
     
     id: Mapped[int] = mapped_column(primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(50), unique=True, index=True) # مثلا IRNBCA یا CPIAUCSL
-    name: Mapped[str] = mapped_column(String(255)) # مثلا Inflation Rate
-    source: Mapped[str] = mapped_column(String(50)) # FRED, WorldBank, AlphaVantage
-    frequency: Mapped[Optional[str]] = mapped_column(String(50)) # Daily, Monthly, Quarterly
+    symbol: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(50))
+    frequency: Mapped[Optional[str]] = mapped_column(String(50))
     
-    # ارتباط با جدول داده‌های زمانی
+    # فیلدهای جدید برای سیستم زمان‌بندی آپدیت
+    update_interval_days: Mapped[int] = mapped_column(Integer, default=30) # پیش‌فرض: آپدیت ماهانه
+    last_updated: Mapped[Optional[date]] = mapped_column(Date, nullable=True) # تاریخ آخرین آپدیت موفق
+    
     data_points: Mapped[List["EconomicData"]] = relationship(back_populates="indicator")
 
-# ==========================================
-# ۲. جدول دیتای سری زمانی (قلب تپنده پروژه)
-# ==========================================
+# ... (ادامه کدهای EconomicData و AssetMarketData بدون تغییر می‌مانند) ...
+# ...# ==========================================
 class EconomicData(Base):
     __tablename__ = "economic_data"
     

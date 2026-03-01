@@ -1,71 +1,74 @@
 import requests
 import asyncio
-from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from database.models import Indicator, EconomicData
+from database.models import Indicator
 
-async def get_all_worldbank_indicators():
-    """این تابع لیست تمام ۲۴,۰۰۰ شاخص موجود در بانک جهانی را استخراج می‌کند"""
-    print("🔍 در حال جستجو برای یافتن تمام شاخص‌های بانک جهانی...")
-    url = "https://api.worldbank.org/v2/indicator?format=json&per_page=30000"
-    response = await asyncio.to_thread(requests.get, url)
-    
-    if response.status_code == 200 and len(response.json()) > 1:
-        indicators = response.json()[1]
-        print(f"🎯 تعداد {len(indicators)} شاخص مختلف در بانک جهانی پیدا شد!")
-        return indicators
-    return []
+async def auto_discover_worldbank_indicators(session: AsyncSession):
+    """
+    دریافت اتوماتیک لیست تمام شاخص‌های بانک جهانی با مکانیزم ضد قطعی
+    """
+    print("در حال شروع کاوشگر اتوماتیک بانک جهانی (WorldBank)...")
+    page = 1
+    total_added = 0
+    max_retries = 3 # حداکثر ۳ بار تلاش در صورت قطعی
 
-async def fetch_world_bank_data(session: AsyncSession, country_code: str, indicator_code: str, name: str):
-    """دریافت دیتای یک شاخص. اگر country_code برابر all باشد، دیتای کل کشورهای دنیا را می‌گیرد!"""
-    url = f"https://api.worldbank.org/v2/country/{country_code}/indicator/{indicator_code}?format=json&per_page=20000"
-    
-    response = await asyncio.to_thread(requests.get, url)
-    if response.status_code != 200 or len(response.json()) < 2:
-        return {"success": False}
+    while True:
+        url = f"http://api.worldbank.org/v2/indicator?format=json&per_page=5000&page={page}"
+        print(f"در حال دریافت صفحه {page} از بانک جهانی...")
         
-    data = response.json()[1]
-    
-    # برای اینکه سرعت ذخیره در دیتابیس بالا برود، شناسنامه‌ها را کش می‌کنیم
-    indicators_cache = {}
-    records_to_insert = []
-    
-    for item in data:
-        if item['value'] is not None and item.get('countryiso3code'):
-            c_code = item['countryiso3code']
-            symbol = f"WB_{c_code}_{indicator_code}".upper()
+        # --- مکانیزم تلاش مجدد (Retry Mechanism) ---
+        success = False
+        for attempt in range(max_retries):
+            try:
+                # استفاده از timeout تا در صورت قطعی اینترنت، برنامه قفل نکند
+                response = requests.get(url, timeout=15)
+                if response.status_code == 200:
+                    success = True
+                    break # خروج از حلقه تلاش مجدد
+                else:
+                    print(f"خطای سرور {response.status_code}. تلاش {attempt + 1} از {max_retries}...")
+                    await asyncio.sleep(5) # ۵ ثانیه صبر و تلاش دوباره
+            except Exception as e:
+                print(f"قطعی ارتباط: {e}. تلاش {attempt + 1} از {max_retries}...")
+                await asyncio.sleep(10) # ۱۰ ثانیه صبر در صورت قطعی اینترنت
+        
+        if not success:
+            print(f"دریافت صفحه {page} پس از {max_retries} بار تلاش با شکست مواجه شد. عبور از این صفحه...")
+            break
+        # -------------------------------------------
             
-            # اگر این نماد قبلاً در دیتابیس ثبت نشده بود، آن را می‌سازیم
-            if symbol not in indicators_cache:
-                ind_result = await session.execute(select(Indicator).where(Indicator.symbol == symbol))
-                indicator = ind_result.scalar_one_or_none()
-                
-                if not indicator:
-                    indicator = Indicator(
-                        symbol=symbol, 
-                        name=f"{item['country']['value']} - {name}", 
-                        source="World Bank", 
-                        frequency="Yearly"
-                    )
-                    session.add(indicator)
-                    await session.commit()
-                    await session.refresh(indicator)
-                
-                indicators_cache[symbol] = indicator.id
-
-            date_obj = datetime.strptime(f"{item['date']}-01-01", "%Y-%m-%d").date()
+        data = response.json()
+        if len(data) < 2:
+            break
+            
+        indicators_list = data[1]
+        if not indicators_list:
+            break
+            
+        records_to_insert = []
+        for ind in indicators_list:
             records_to_insert.append({
-                "indicator_id": indicators_cache[symbol],
-                "date": date_obj,
-                "value": float(item['value'])
+                "symbol": ind['id'].upper(),
+                "name": ind['name'],
+                "source": "WORLDBANK",
+                "frequency": "Yearly",
+                "update_interval_days": 180
             })
-
-    if records_to_insert:
-        stmt = insert(EconomicData).values(records_to_insert)
-        stmt = stmt.on_conflict_do_nothing(index_elements=['indicator_id', 'date'])
-        await session.execute(stmt)
-        await session.commit()
+            
+        if records_to_insert:
+            stmt = insert(Indicator).values(records_to_insert)
+            stmt = stmt.on_conflict_do_nothing(index_elements=['symbol'])
+            result = await session.execute(stmt)
+            await session.commit()
+            total_added += result.rowcount
+            
+        pagination = data[0]
+        if page >= pagination['pages']:
+            break
         
-    return {"success": True, "records_saved": len(records_to_insert)}
+        page += 1
+        await asyncio.sleep(1) # یک ثانیه مکث بین هر صفحه برای جلوگیری از بلاک شدن توسط سرور
+        
+    print(f"کاوشگر بانک جهانی تمام شد! {total_added} شاخص جدید ثبت شد.")
+    return total_added
