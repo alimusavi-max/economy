@@ -8,11 +8,11 @@ from services.market_service import fetch_and_store_market_data
 from services.fred_service import fetch_and_store_fred_series
 from services.discovery_service import discover_fred_category, seed_market_symbols, auto_discover_all_fred
 from services.worldbank_service import auto_discover_worldbank_indicators
-
+from services.alphavantage_service import fetch_and_store_alphavantage
 # تنظیمات دیتابیس و مدل‌ها
 from database.database import engine, get_db
 from database.models import Base
-
+from services.ecb_service import fetch_and_store_ecb_data, auto_discover_ecb
 # ایمپورت روتر دیتا (مسیرهای مربوط به فرانت‌اند)
 from routers import data_router
 
@@ -21,9 +21,6 @@ from services.scheduler_service import start_scheduler
 
 # === تابع اصلی کاوشگر جهانی (Spider) ===
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
-    """
-    این تابع حالا می‌فهمد که باید همه خزنده‌ها را روشن کند یا فقط یک خزنده خاص را.
-    """
     print(f"شروع عملیات کاوشگر برای منبع: {source}")
     try:
         if source in ["ALL", "WORLDBANK"]:
@@ -33,12 +30,20 @@ async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
             await auto_discover_all_fred(db)
             
         if source in ["ALL", "YAHOO"]:
-            await seed_market_symbols(db) # برای یاهو فعلاً همان لیست اولیه را تزریق می‌کنیم
+            from services.discovery_service import seed_market_symbols
+            await seed_market_symbols(db)
+            
+        if source in ["ALL", "ALPHAVANTAGE"]:
+            await seed_alphavantage_symbols(db)
+            
+        # --- این دو خط برای بانک مرکزی اروپا اضافه شد ---
+        if source in ["ALL", "ECB"]:
+            await auto_discover_ecb(db)
+        # -----------------------------------------------
             
         print(f"عملیات کاوشگر برای {source} با موفقیت به پایان رسید!")
     except Exception as e:
         print(f"خطا در حین اجرای کاوشگر {source}: {e}")
-# =======================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -129,3 +134,25 @@ async def trigger_auto_spider(
         "success": True, 
         "message": f"موتور کاوشگر برای [{msg_source}] در پس‌زمینه روشن شد! لطفاً چند دقیقه دیگر داشبورد را رفرش کنید."
     }
+
+@app.post("/api/fetch/alpha/{symbol}")
+async def trigger_alpha_fetch(
+    symbol: str, 
+    asset_type: str = "STOCK", # می تواند STOCK, CRYPTO, FX باشد
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    دریافت دیتای بازارهای مالی از Alpha Vantage
+    مثال: symbol=IBM , asset_type=STOCK
+    """
+    result = await fetch_and_store_alphavantage(session=db, symbol=symbol, asset_type=asset_type)
+    return result
+
+@app.post("/api/fetch/ecb/{symbol}")
+async def trigger_ecb_fetch(
+    symbol: str, 
+    db: AsyncSession = Depends(get_db)
+):
+    """دریافت دستی دیتای بانک مرکزی اروپا"""
+    result = await fetch_and_store_ecb_data(session=db, symbol=symbol)
+    return result
