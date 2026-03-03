@@ -9,6 +9,8 @@ from services.fred_service import fetch_and_store_fred_series
 from services.discovery_service import discover_fred_category, seed_market_symbols, auto_discover_all_fred
 from services.worldbank_service import auto_discover_worldbank_indicators
 from services.alphavantage_service import fetch_and_store_alphavantage
+from services.imf_service import auto_discover_imf_indicators
+from services.oecd_service import auto_discover_oecd_indicators
 # تنظیمات دیتابیس و مدل‌ها
 from database.database import engine, get_db
 from database.models import Base
@@ -33,14 +35,15 @@ async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
             from services.discovery_service import seed_market_symbols
             await seed_market_symbols(db)
             
-        if source in ["ALL", "ALPHAVANTAGE"]:
-            await seed_alphavantage_symbols(db)
-            
-        # --- این دو خط برای بانک مرکزی اروپا اضافه شد ---
         if source in ["ALL", "ECB"]:
             await auto_discover_ecb(db)
-        # -----------------------------------------------
-            
+
+        if source in ["ALL", "IMF"]:
+            await auto_discover_imf_indicators(db)
+
+        if source in ["ALL", "OECD"]:
+            await auto_discover_oecd_indicators(db)
+
         print(f"عملیات کاوشگر برای {source} با موفقیت به پایان رسید!")
     except Exception as e:
         print(f"خطا در حین اجرای کاوشگر {source}: {e}")
@@ -116,6 +119,21 @@ async def trigger_market_seed(
 ):
     result = await seed_market_symbols(session=db)
     return result
+
+
+@app.post("/api/discover/imf")
+async def trigger_imf_discovery(
+    db: AsyncSession = Depends(get_db)
+):
+    result = await auto_discover_imf_indicators(db)
+    return {"success": True, "new_indicators": result}
+
+@app.post("/api/discover/oecd")
+async def trigger_oecd_discovery(
+    db: AsyncSession = Depends(get_db)
+):
+    result = await auto_discover_oecd_indicators(db)
+    return {"success": True, "new_indicators": result}
 
 @app.post("/api/discover/auto-spider")
 async def trigger_auto_spider(
