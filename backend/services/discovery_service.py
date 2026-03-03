@@ -28,16 +28,57 @@ async def discover_fred_category(session: AsyncSession, category_id: int):
     return {"success": True}
 
 async def seed_market_symbols(session: AsyncSession):
-    # (کد قبلی شما برای تزریق نمادهای یاهو)
-    top_symbols = [
-        {"symbol": "^GSPC", "name": "S&P 500 Index", "source": "YAHOO", "frequency": "Daily", "update_interval_days": 1},
-        {"symbol": "GC=F", "name": "Gold Futures", "source": "YAHOO", "frequency": "Daily", "update_interval_days": 1},
-        {"symbol": "BTC-USD", "name": "Bitcoin / USD", "source": "YAHOO", "frequency": "Daily", "update_interval_days": 1},
+    """
+    کاوشگر عمیق بازارهای مالی: استخراج زنده ۵۰۰ شرکت برتر آمریکا + فارکس + کریپتو
+    """
+    print("🚀 در حال استخراج دیتای S&P 500 از ویکی‌پدیا و بازارهای جهانی...")
+    records_to_insert = []
+    
+    # ۱. استخراج اتوماتیک ۵۰۰ شرکت برتر بورس آمریکا (S&P 500)
+    try:
+        # با یک خط کد، تمام جداول صفحه ویکی‌پدیا را می‌خوانیم!
+        tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+        sp500_df = tables[0]
+        
+        for index, row in sp500_df.iterrows():
+            symbol = str(row['Symbol']).replace('.', '-') # تبدیل نمادهایی مثل BRK.B به BRK-B (استاندارد یاهو)
+            records_to_insert.append({
+                "symbol": symbol,
+                "name": f"S&P 500: {row['Security']} ({row['GICS Sector']})",
+                "source": "YAHOO",
+                "frequency": "Daily",
+                "update_interval_days": 1
+            })
+    except Exception as e:
+        print(f"❌ خطا در دریافت لیست S&P 500: {e}")
+
+    # ۲. لیست ارزهای دیجیتال اصلی (Top Crypto)
+    cryptos = [
+        ("BTC-USD", "Bitcoin"), ("ETH-USD", "Ethereum"), ("BNB-USD", "Binance Coin"),
+        ("SOL-USD", "Solana"), ("XRP-USD", "Ripple"), ("ADA-USD", "Cardano"),
+        ("DOGE-USD", "Dogecoin"), ("TRX-USD", "TRON"), ("LINK-USD", "Chainlink")
     ]
-    stmt = insert(Indicator).values(top_symbols).on_conflict_do_nothing(index_elements=['symbol'])
-    await session.execute(stmt)
-    await session.commit()
-    return {"success": True}
+    for c in cryptos:
+        records_to_insert.append({"symbol": c[0], "name": f"Crypto: {c[1]}", "source": "YAHOO", "frequency": "Daily", "update_interval_days": 1})
+
+    # ۳. لیست جفت‌ارزهای جهانی (Forex)
+    forex = [
+        ("EURUSD=X", "EUR/USD"), ("GBPUSD=X", "GBP/USD"), ("JPY=X", "USD/JPY"),
+        ("EURGBP=X", "EUR/GBP"), ("CAD=X", "USD/CAD"), ("AUDUSD=X", "AUD/USD"),
+        ("CHF=X", "USD/CHF"), ("CNY=X", "USD/CNY"), ("IRR=X", "USD/IRR")
+    ]
+    for f in forex:
+        records_to_insert.append({"symbol": f[0], "name": f"Forex: {f[1]}", "source": "YAHOO", "frequency": "Daily", "update_interval_days": 1})
+
+    # تزریق یک‌جای بیش از ۵۰۰ نماد به دیتابیس
+    if records_to_insert:
+        stmt = insert(Indicator).values(records_to_insert).on_conflict_do_nothing(index_elements=['symbol'])
+        result = await session.execute(stmt)
+        await session.commit()
+        print(f"🎉 کاوشگر بازار تمام شد! {result.rowcount} نماد مالی در دیتابیس ثبت شد.")
+        return result.rowcount
+    
+    return 0
 
 
 # ==========================================

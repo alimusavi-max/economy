@@ -21,9 +21,11 @@ from services.ecb_service import fetch_and_store_ecb_data, auto_discover_ecb
 # ایمپورت روتر دیتا (مسیرهای مربوط به فرانت‌اند)
 from routers import data_router, pipeline_router
 from sqlalchemy import select
+from services.eurostat_service import auto_discover_eurostat
 # ایمپورت سیستم زمان‌بندی
 from services.scheduler_service import start_scheduler
 from database.models import AssetMarketData
+from services.bis_service import auto_discover_bis_indicators
 # === تابع اصلی کاوشگر جهانی (Spider) ===
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
     print(f"شروع عملیات کاوشگر برای منبع: {source}")
@@ -46,11 +48,18 @@ async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
 
         if source in ["ALL", "OECD"]:
             await auto_discover_oecd_indicators(db)
+            
+        # --- کاوشگر جدید BIS اضافه شد ---
+        if source in ["ALL", "BIS"]:
+            await auto_discover_bis_indicators(db)
+            
+        if source in ["ALL", "EUROSTAT"]:
+            await auto_discover_eurostat(db)
 
         print(f"عملیات کاوشگر برای {source} با موفقیت به پایان رسید!")
     except Exception as e:
         print(f"خطا در حین اجرای کاوشگر {source}: {e}")
-
+        
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if engine is not None:

@@ -20,35 +20,55 @@ ECB_SDMX_KEYS = {
 }
 
 async def auto_discover_ecb(session: AsyncSession):
-    """تزریق شناسنامه حیاتی‌ترین شاخص‌های اقتصاد کلان اروپا به دیتابیس"""
-    print("در حال شروع کاوشگر بانک مرکزی اروپا (ECB)...")
+    """
+    کاوشگر عمیق و اتوماتیک تمام پایگاه‌های داده بانک مرکزی اروپا (ECB)
+    """
+    print("🌍 در حال شروع کاوشگر عمیق بانک مرکزی اروپا (ECB)...")
     
-    ecb_core_indicators = [
-        {"symbol": "ECB_DFR", "name": "نرخ تسهیلات سپرده (Deposit Facility Rate) - اروپا", "frequency": "Daily", "update_interval_days": 1},
-        {"symbol": "ECB_MRO", "name": "نرخ عملیات ریفایننس (Main Refinancing Operations) - اروپا", "frequency": "Daily", "update_interval_days": 1},
-        {"symbol": "ECB_MLF", "name": "نرخ تسهیلات وام‌دهی نهایی (Marginal Lending Facility) - اروپا", "frequency": "Daily", "update_interval_days": 1},
-        {"symbol": "ECB_HICP", "name": "تورم ناحیه یورو (HICP - Annual Rate)", "frequency": "Monthly", "update_interval_days": 30},
-        {"symbol": "ECB_UNEMP", "name": "نرخ بیکاری ناحیه یورو", "frequency": "Monthly", "update_interval_days": 30},
-        {"symbol": "ECB_EURUSD", "name": "نرخ رسمی یورو به دلار (EUR/USD) - رفرنس ECB", "frequency": "Daily", "update_interval_days": 1},
-        {"symbol": "ECB_EURGBP", "name": "نرخ رسمی یورو به پوند (EUR/GBP) - رفرنس ECB", "frequency": "Daily", "update_interval_days": 1},
-    ]
+    # آدرس رسمی SDMX 2.1 برای دریافت لیست تمام پایگاه‌های داده اروپا
+    url = "https://data-api.ecb.europa.eu/service/dataflow/ECB/all/latest"
+    headers = {"Accept": "application/vnd.sdmx.structure+json;version=1.0"}
+
+    max_retries = 3
+    response_json = None
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=20)
+            if response.status_code == 200:
+                response_json = response.json()
+                break
+            await asyncio.sleep(3)
+        except:
+            await asyncio.sleep(5)
 
     records_to_insert = []
-    for ind in ecb_core_indicators:
-        records_to_insert.append({
-            "symbol": ind['symbol'],
-            "name": ind['name'],
-            "source": "ECB",
-            "frequency": ind['frequency'],
-            "update_interval_days": ind['update_interval_days']
-        })
+    
+    # پردازش دیتای اتوماتیک
+    if response_json and "data" in response_json and "dataflows" in response_json["data"]:
+        for flow in response_json["data"]["dataflows"]:
+            flow_id = (flow.get("id") or "").upper().strip()
+            name = flow.get("name") or flow_id
+            if flow_id:
+                records_to_insert.append({
+                    "symbol": f"ECB_{flow_id}"[:50],
+                    "name": f"ECB: {name}"[:255],
+                    "source": "ECB",
+                    "frequency": "Mixed",
+                    "update_interval_days": 30
+                })
+    else:
+        print("خطا در ارتباط با سرورهای ECB برای دریافت اتوماتیک.")
 
-    stmt = insert(Indicator).values(records_to_insert).on_conflict_do_nothing(index_elements=['symbol'])
-    result = await session.execute(stmt)
-    await session.commit()
+    # تزریق به دیتابیس
+    if records_to_insert:
+        stmt = insert(Indicator).values(records_to_insert).on_conflict_do_nothing(index_elements=['symbol'])
+        result = await session.execute(stmt)
+        await session.commit()
+        print(f"🎉 کاوشگر ECB تمام شد! {result.rowcount} مجموعه داده کلان از اروپا ثبت شد.")
+        return result.rowcount
 
-    print(f"کاوشگر ECB تمام شد! {result.rowcount} شاخص کلان اروپا ثبت شد.")
-    return result.rowcount
+    return 0
 
 async def fetch_and_store_ecb_data(session: AsyncSession, symbol: str):
     """دانلود دیتای تاریخی از سرورهای بانک مرکزی اروپا"""
