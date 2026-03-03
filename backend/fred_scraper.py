@@ -1,79 +1,107 @@
-import pandas as pd
 import asyncio
-import httpx
 import os
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-from dotenv import load_dotenv
+from datetime import date as dt_date, datetime
 
-# خواندن اتوماتیک کلید API و آدرس دیتابیس از فایل .env
+import httpx
+from dotenv import load_dotenv
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from database.models import EconomicData, Indicator
+
 load_dotenv()
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-async def fetch_and_insert_fred_data(series_id, series_name):
+if not FRED_API_KEY:
+    raise ValueError("FRED_API_KEY در فایل .env تنظیم نشده است.")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL در فایل .env تنظیم نشده است.")
+
+engine = create_async_engine(DATABASE_URL, echo=False)
+SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+async def _upsert_indicator(session: AsyncSession, series_id: str, series_name: str) -> Indicator:
+    result = await session.execute(select(Indicator).where(Indicator.symbol == series_id))
+    indicator = result.scalar_one_or_none()
+
+    if indicator is None:
+        indicator = Indicator(
+            symbol=series_id,
+            name=series_name,
+            source="FRED",
+            frequency="Monthly",
+            update_interval_days=30,
+            last_updated=dt_date.today(),
+        )
+        session.add(indicator)
+        await session.commit()
+        await session.refresh(indicator)
+    return indicator
+
+
+async def fetch_and_insert_fred_data(series_id: str, series_name: str):
     print(f"🦅 در حال دریافت دیتای {series_name} ({series_id}) از فدرال رزرو آمریکا...")
-    
-    # آدرس API بانک FRED
-    url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json"
-    
+    url = (
+        "https://api.stlouisfed.org/fred/series/observations"
+        f"?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json"
+    )
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=20.0)
-            data = response.json()
-            
-        df = pd.DataFrame(data['observations'])
-        print(f"✅ دانلود موفق! {len(df)} رکورد برای {series_id} دریافت شد.")
-        
-        # تمیز کردن دیتا (FRED گاهی برای روزهای تعطیل نقطه '.' می‌گذارد)
-        df = df[df['value'] != '.']
-        df['date'] = pd.to_datetime(df['date']).dt.date
-        df['value'] = pd.to_numeric(df['value'])
-        df['symbol'] = series_id
-        
-        # آماده‌سازی برای تزریق به جدول indicators
-        records = df[['symbol', 'date', 'value']].to_dict(orient='records')
-        
-        # اتصال به دیتابیس
-        engine = create_async_engine(DATABASE_URL)
-        
-        # عملیات ۱: ساخت جدول (در یک تراکنش مستقل و امن)
-        async with engine.begin() as conn:
-            await conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS indicators (
-                    symbol VARCHAR(50) NOT NULL,
-                    date DATE NOT NULL,
-                    value DOUBLE PRECISION,
-                    PRIMARY KEY (symbol, date)
-                );
-            """))
-            
-        # عملیات ۲: اجرای جادوی تایم‌سری (در تراکنش مستقل دوم)
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text("SELECT create_hypertable('indicators', 'date', if_not_exists => TRUE);"))
-        except Exception as e:
-            # اگر از قبل تایم‌سری شده باشد یا خطای جزئی بدهد، از آن عبور می‌کنیم
-            pass 
-            
-        # عملیات ۳: تزریق فوق‌سریع دیتا (در تراکنش مستقل سوم)
-        async with engine.begin() as conn:
-            query = text("""
-                INSERT INTO indicators (symbol, date, value)
-                VALUES (:symbol, :date, :value)
-                ON CONFLICT (symbol, date) DO NOTHING;
-            """)
-            await conn.execute(query, records)
-            
-        print(f"🎉 بوم! دیتای {series_name} با موفقیت در دیتابیس تایم‌سری نشست!\n")
-        
-    except Exception as e:
-        print(f"❌ خطایی در دریافت {series_id} رخ داد: {e}\n")
+            response.raise_for_status()
+            payload = response.json()
+
+        observations = payload.get("observations", [])
+        print(f"✅ دانلود موفق! {len(observations)} رکورد برای {series_id} دریافت شد.")
+
+        cleaned_records = []
+        for obs in observations:
+            try:
+                if obs.get("value") == ".":
+                    continue
+                date_obj = datetime.strptime(obs["date"], "%Y-%m-%d").date()
+                cleaned_records.append({"date": date_obj, "value": float(obs["value"])})
+            except (KeyError, ValueError):
+                continue
+
+        async with SessionLocal() as session:
+            indicator = await _upsert_indicator(session, series_id, series_name)
+
+            if cleaned_records:
+                records_to_insert = [
+                    {
+                        "indicator_id": indicator.id,
+                        "date": item["date"],
+                        "value": item["value"],
+                    }
+                    for item in cleaned_records
+                ]
+
+                stmt = insert(EconomicData).values(records_to_insert)
+                stmt = stmt.on_conflict_do_nothing(index_elements=["indicator_id", "date"])
+                result = await session.execute(stmt)
+
+                indicator.last_updated = dt_date.today()
+                session.add(indicator)
+                await session.commit()
+                print(
+                    f"🎉 {series_name}: {result.rowcount} رکورد جدید ذخیره شد (از {len(cleaned_records)} رکورد معتبر).\n"
+                )
+            else:
+                print(f"⚠️ رکورد معتبری برای {series_id} پیدا نشد.\n")
+
+    except Exception as exc:
+        print(f"❌ خطایی در دریافت {series_id} رخ داد: {exc}\n")
+
 
 async def main():
-    # دریافت همزمان حجم پول و نرخ بیکاری
     await fetch_and_insert_fred_data("M2SL", "حجم پول آمریکا")
     await fetch_and_insert_fred_data("UNRATE", "نرخ بیکاری آمریکا")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
