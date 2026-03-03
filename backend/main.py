@@ -53,13 +53,16 @@ async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("در حال اتصال به دیتابیس و بررسی جداول...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        
+    if engine is not None:
+        print("در حال اتصال به دیتابیس و بررسی جداول...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    else:
+        print("هشدار: اتصال دیتابیس برقرار نشد؛ سرور بدون قابلیت‌های دیتابیس اجرا می‌شود.")
+
     # روشن کردن سیستم زمان‌بندی در پس‌زمینه
     start_scheduler()
-    
+
     yield
     print("سرور در حال خاموش شدن است...")
 
