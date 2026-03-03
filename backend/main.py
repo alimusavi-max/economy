@@ -16,7 +16,7 @@ from database.database import engine, get_db
 from database.models import Base
 from services.ecb_service import fetch_and_store_ecb_data, auto_discover_ecb
 # ایمپورت روتر دیتا (مسیرهای مربوط به فرانت‌اند)
-from routers import data_router
+from routers import data_router, pipeline_router
 from sqlalchemy import select
 # ایمپورت سیستم زمان‌بندی
 from services.scheduler_service import start_scheduler
@@ -74,6 +74,7 @@ app.add_middleware(
 
 # === متصل کردن روترها به اپلیکیشن اصلی ===
 app.include_router(data_router.router)
+app.include_router(pipeline_router.router)
 
 
 @app.get("/")
