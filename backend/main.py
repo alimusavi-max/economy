@@ -78,9 +78,11 @@ app.add_middleware(
 # === متصل کردن روترها به اپلیکیشن اصلی ===
 app.include_router(data_router.router)
 app.include_router(pipeline_router.router)
+codex/fix-undefinedcolumnerror-in-indicators-table-o15y0n
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+ main
 
 
 @app.get("/")
