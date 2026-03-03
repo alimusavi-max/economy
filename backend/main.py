@@ -15,10 +15,10 @@ from database.models import Base
 from services.ecb_service import fetch_and_store_ecb_data, auto_discover_ecb
 # ایمپورت روتر دیتا (مسیرهای مربوط به فرانت‌اند)
 from routers import data_router
-
+from sqlalchemy import select
 # ایمپورت سیستم زمان‌بندی
 from services.scheduler_service import start_scheduler
-
+from database.models import AssetMarketData
 # === تابع اصلی کاوشگر جهانی (Spider) ===
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
     print(f"شروع عملیات کاوشگر برای منبع: {source}")
@@ -156,3 +156,20 @@ async def trigger_ecb_fetch(
     """دریافت دستی دیتای بانک مرکزی اروپا"""
     result = await fetch_and_store_ecb_data(session=db, symbol=symbol)
     return result
+
+@app.get("/api/market/eur-usd")
+async def get_eur_usd_history(db: AsyncSession = Depends(get_db)):
+    """دریافت تاریخچه قیمت یورو به دلار برای رسم نمودار"""
+    
+    # یک کوئری سریع برای گرفتن ۱۰۰ رکورد آخر (یا بیشتر، بسته به نیاز نمودار)
+    query = (
+        select(AssetMarketData)
+        .where(AssetMarketData.symbol == 'EUR/USD')
+        .order_by(AssetMarketData.date.desc())
+        .limit(100)
+    )
+    
+    result = await db.execute(query)
+    records = result.scalars().all()
+    
+    return {"symbol": "EUR/USD", "data": records}
