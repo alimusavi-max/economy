@@ -1,6 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 # سرویس‌ها
@@ -75,11 +78,20 @@ app.add_middleware(
 # === متصل کردن روترها به اپلیکیشن اصلی ===
 app.include_router(data_router.router)
 app.include_router(pipeline_router.router)
+codex/fix-undefinedcolumnerror-in-indicators-table-o15y0n
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+ main
 
 
 @app.get("/")
 async def root():
     return {"message": "موتور تحلیل اقتصاد جهانی روشن است 🚀"}
+
+@app.get("/dashboard")
+async def dashboard_page():
+    return FileResponse(str(STATIC_DIR / "index.html"))
 
 # --- Endpoints برای دریافت و کشف دیتا ---
 
