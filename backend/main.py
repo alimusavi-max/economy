@@ -26,6 +26,7 @@ from services.eurostat_service import auto_discover_eurostat
 from services.scheduler_service import start_scheduler
 from database.models import AssetMarketData
 from services.bis_service import auto_discover_bis_indicators
+
 # === تابع اصلی کاوشگر جهانی (Spider) ===
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
     print(f"شروع عملیات کاوشگر برای منبع: {source}")

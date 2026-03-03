@@ -3,12 +3,13 @@ import sys
 from sqlalchemy import select
 from database.database import AsyncSessionLocal
 from database.models import Indicator
-
+from services.imf_service import fetch_and_store_imf_data
 # ایمپورت توابع استخراج (Fetchers)
 from services.fred_service import fetch_and_store_fred_series
 from services.worldbank_service import fetch_world_bank_data
 from services.market_service import fetch_and_store_market_data
 from services.ecb_service import fetch_and_store_ecb_data
+from services.bis_service import fetch_and_store_bis_data # 👈 موتور جدید BIS اضافه شد
 
 async def run_miner(target_source=None):
     print("==================================================")
@@ -38,10 +39,9 @@ async def run_miner(target_source=None):
             try:
                 if ind.source == "FRED":
                     await fetch_and_store_fred_series(session, ind.symbol, ind.name, ind.frequency or "Monthly")
-                    await asyncio.sleep(1.5) # جلوگیری از بلاک شدن IP (Rate Limit)
+                    await asyncio.sleep(1.5)
                     
                 elif ind.source == "WORLDBANK":
-                    # ارسال کلمه all برای دریافت دیتای همه کشورهای دنیا به صورت یکجا
                     original_id = ind.symbol.replace("WB_ALL_", "") if "WB_ALL_" in ind.symbol else ind.symbol
                     await fetch_world_bank_data(session, "all", original_id, ind.name)
                     await asyncio.sleep(2)
@@ -53,13 +53,29 @@ async def run_miner(target_source=None):
                 elif ind.source == "ECB":
                     await fetch_and_store_ecb_data(session, ind.symbol)
                     await asyncio.sleep(1.5)
+
+                # 👇 بخش جدید و اختصاصی برای بانک تسویه حساب‌های بین‌المللی (BIS)
+                elif ind.source == "BIS":
+                    result = await fetch_and_store_bis_data(session, ind.symbol)
+                    if result.get("success"):
+                        print(f"   📊 دیتای {ind.symbol} با موفقیت در دیتابیس تزریق شد.")
+                    else:
+                        print(f"   ⚠️ پیام سرور BIS: {result.get('message')}")
+                    await asyncio.sleep(2)
                     
-                elif ind.source in ["EUROSTAT", "BIS", "IMF", "OECD"]:
-                    # این غول‌ها از سیستم پیچیده SDMX استفاده می‌کنند که موتور اختصاصی خودش را می‌طلبد
-                    print(f"   ⏳ نیازمند موتور پردازشگر SDMX (در برنامه‌ی توسعه بعدی). عبور...")
+                # بقیه بانک‌ها که هنوز موتور SDMX ندارند
+                # 👇 بخش جدید اضافه شده برای صندوق بین‌المللی پول
+                elif ind.source == "IMF":
+                    result = await fetch_and_store_imf_data(session, ind.symbol)
+                    if result.get("success"):
+                        print(f"   📊 دیتای {ind.symbol} با موفقیت تزریق شد.")
+                    else:
+                        print(f"   ⚠️ پیام سرور IMF: {result.get('message')}")
+                    await asyncio.sleep(1) # استراحت ۱ ثانیه‌ای
                     
-                else:
-                    print(f"   ⚠️ منبع ناشناخته: {ind.source}")
+                # یوروستات و OECD هنوز موتور استخراج ندارند
+                elif ind.source in ["EUROSTAT", "OECD"]:
+                    print(f"   ⏳ نیازمند موتور استخراج (در دست ساخت). عبور...")
                     
             except Exception as e:
                 print(f"   ❌ خطا در دانلود شاخص {ind.symbol}: {e}")
@@ -69,11 +85,8 @@ async def run_miner(target_source=None):
     print("\n✅ عملیات معدن‌چی با موفقیت به پایان رسید!")
 
 if __name__ == "__main__":
-    # امکان دریافت نام منبع از ترمینال (مثلاً: python miner.py FRED)
     source_arg = sys.argv[1] if len(sys.argv) > 1 else None
-    
-    # اجرای حلقه ناهمگام (Async)
     try:
         asyncio.run(run_miner(source_arg))
     except KeyboardInterrupt:
-        print("\n🛑 معدن‌چی با دستور شما (Ctrl+C) متوقف شد. دیتای دانلود شده تا الان، در دیتابیس محفوظ است.")
+        print("\n🛑 معدن‌چی با دستور شما متوقف شد.")
