@@ -10,7 +10,8 @@ from services.worldbank_service import fetch_world_bank_data
 from services.market_service import fetch_and_store_market_data
 from services.ecb_service import fetch_and_store_ecb_data
 from services.bis_service import fetch_and_store_bis_data # 👈 موتور جدید BIS اضافه شد
-
+from services.dbnomics_service import fetch_and_store_dbnomics_data
+from services.eurostat_service import fetch_and_store_eurostat_data
 async def run_miner(target_source=None):
     print("==================================================")
     print(" ⛏️  موتور معدن‌چی اقتصاد جهانی (Master Miner) روشن شد ")
@@ -54,6 +55,15 @@ async def run_miner(target_source=None):
                     await fetch_and_store_ecb_data(session, ind.symbol)
                     await asyncio.sleep(1.5)
 
+
+                elif ind.source == "DBNOMICS":
+                    result = await fetch_and_store_dbnomics_data(session, ind.symbol)
+                    if result.get("success"):
+                        print(f"   📊 دیتای {ind.symbol} با موفقیت تزریق شد.")
+                    else:
+                        print(f"   ⚠️ پیام سرور: {result.get('message')}")
+                    await asyncio.sleep(1)
+                    
                 # 👇 بخش جدید و اختصاصی برای بانک تسویه حساب‌های بین‌المللی (BIS)
                 elif ind.source == "BIS":
                     result = await fetch_and_store_bis_data(session, ind.symbol)
@@ -74,8 +84,14 @@ async def run_miner(target_source=None):
                     await asyncio.sleep(1) # استراحت ۱ ثانیه‌ای
                     
                 # یوروستات و OECD هنوز موتور استخراج ندارند
-                elif ind.source in ["EUROSTAT", "OECD"]:
-                    print(f"   ⏳ نیازمند موتور استخراج (در دست ساخت). عبور...")
+                # 👇 آخرین قطعه پازل اقتصاد کلان (یوروستات)
+                elif ind.source == "EUROSTAT":
+                    result = await fetch_and_store_eurostat_data(session, ind.symbol)
+                    if result.get("success"):
+                        print(f"   📊 دیتای {ind.symbol} با موفقیت تزریق شد.")
+                    else:
+                        print(f"   ⚠️ پیام سرور Eurostat: {result.get('message')}")
+                    await asyncio.sleep(2) # استراحت ۲ ثانیه‌ای برای فرار از بلاک شدن
                     
             except Exception as e:
                 print(f"   ❌ خطا در دانلود شاخص {ind.symbol}: {e}")
