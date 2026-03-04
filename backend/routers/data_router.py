@@ -149,18 +149,12 @@ async def get_available_symbols(
     dbnomics_provider: Optional[str] = Query(default=None, description="فیلتر زیرمنبع DBNOMICS مثل CBI/SAMA/BOE"),
     with_data_only: bool = Query(default=False, description="فقط شاخص‌هایی که دیتای زمانی دارند"),
     search: Optional[str] = Query(default=None, description="جستجو روی name/symbol/source"),
-
-    limit: int = Query(default=300, ge=1, le=10000),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=100, ge=1, le=1000),
-
     limit: int = Query(default=300, ge=1, le=2000),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=300),
-
     paginated: bool = Query(default=False, description="در صورت true خروجی شامل items+pagination می‌شود"),
 ):
-    base_query = (
+    query = (
         select(
             Indicator.id,
             Indicator.symbol,
@@ -177,21 +171,23 @@ async def get_available_symbols(
     )
 
     if source:
-        base_query = base_query.where(Indicator.source == source.upper())
+        query = query.where(Indicator.source == source.upper())
+
 
     if dbnomics_provider:
-        base_query = base_query.where(Indicator.source == "DBNOMICS")
-        base_query = base_query.where(func.upper(Indicator.dbnomics_provider) == dbnomics_provider.upper())
+        query = query.where(Indicator.source == "DBNOMICS")
+        query = query.where(Indicator.dbnomics_provider == dbnomics_provider.upper())
+
 
     if search:
         pattern = f"%{search.strip()}%"
-        base_query = base_query.where(
+        query = query.where(
             Indicator.symbol.ilike(pattern)
             | Indicator.name.ilike(pattern)
             | Indicator.source.ilike(pattern)
         )
 
-    base_query = base_query.group_by(
+    query = query.group_by(
         Indicator.id,
         Indicator.symbol,
         Indicator.name,
@@ -203,26 +199,20 @@ async def get_available_symbols(
     )
 
     if with_data_only:
-        base_query = base_query.having(func.count(EconomicData.id) > 0)
+        query = query.having(func.count(EconomicData.id) > 0)
 
-    ordered_query = base_query.order_by(Indicator.source.asc(), Indicator.name.asc())
+    query = query.order_by(Indicator.source.asc(), Indicator.name.asc()).limit(limit)
 
     try:
+        result = await db.execute(query)
+        rows = result.all()
         has_dbnomics_provider_column = True
-        if paginated:
-            count_query = select(func.count()).select_from(base_query.subquery())
-            total = int((await db.execute(count_query)).scalar() or 0)
-            rows_query = ordered_query.offset((page - 1) * page_size).limit(page_size)
-        else:
-            total = None
-            rows_query = ordered_query.limit(limit)
-
-        rows = (await db.execute(rows_query)).all()
     except ProgrammingError as exc:
+        # Backward compatibility for old databases where this column has not been migrated yet.
+        # In that case we re-run a reduced query and return null for dbnomics_provider.
         if "dbnomics_provider" not in str(exc).lower():
             raise
 
-        has_dbnomics_provider_column = False
         fallback_query = (
             select(
                 Indicator.id,
@@ -242,6 +232,8 @@ async def get_available_symbols(
             fallback_query = fallback_query.where(Indicator.source == source.upper())
 
         if dbnomics_provider:
+            # If DB lacks provider column we cannot provider-filter accurately.
+            # Keep DBNOMICS-only filter to reduce surprises instead of crashing.
             fallback_query = fallback_query.where(Indicator.source == "DBNOMICS")
 
         if search:
@@ -265,17 +257,10 @@ async def get_available_symbols(
         if with_data_only:
             fallback_query = fallback_query.having(func.count(EconomicData.id) > 0)
 
-        ordered_fallback_query = fallback_query.order_by(Indicator.source.asc(), Indicator.name.asc())
-        if paginated:
-            count_query = select(func.count()).select_from(fallback_query.subquery())
-            total = int((await db.execute(count_query)).scalar() or 0)
-            rows_query = ordered_fallback_query.offset((page - 1) * page_size).limit(page_size)
-        else:
-            total = None
-            rows_query = ordered_fallback_query.limit(limit)
-
-
-        rows = (await db.execute(rows_query)).all()
+        fallback_query = fallback_query.order_by(Indicator.source.asc(), Indicator.name.asc()).limit(limit)
+        result = await db.execute(fallback_query)
+        rows = result.all()
+        has_dbnomics_provider_column = False
 
     rows_payload = [
         {
@@ -296,26 +281,16 @@ async def get_available_symbols(
     if not paginated:
         return rows_payload
 
-
-    total_pages = max((total + page_size - 1) // page_size, 1)
-    return {
-        "items": rows_payload,
-
     total = len(rows_payload)
     start = (page - 1) * page_size
     end = start + page_size
     return {
         "items": rows_payload[start:end],
-
         "pagination": {
             "total": total,
             "page": page,
             "page_size": page_size,
-
-            "total_pages": total_pages,
-
             "total_pages": max((total + page_size - 1) // page_size, 1),
-
         },
     }
 
@@ -324,8 +299,6 @@ async def get_available_symbols(
 async def get_dbnomics_providers(
     db: AsyncSession = Depends(get_db),
     with_data_only: bool = Query(default=False, description="فقط زیرمنبع‌هایی که دیتای زمانی دارند"),
-    search: Optional[str] = Query(default=None, description="جستجو در نام زیرمنبع"),
-    limit: int = Query(default=5000, ge=1, le=20000),
 ):
     try:
         query = (
@@ -335,11 +308,7 @@ async def get_dbnomics_providers(
             .where(Indicator.dbnomics_provider != "")
             .group_by(Indicator.dbnomics_provider)
             .order_by(Indicator.dbnomics_provider.asc())
-            .limit(limit)
         )
-
-        if search:
-            query = query.where(Indicator.dbnomics_provider.ilike(f"%{search.strip()}%"))
 
         if with_data_only:
             query = (
@@ -351,11 +320,7 @@ async def get_dbnomics_providers(
                 .where(Indicator.dbnomics_provider != "")
                 .group_by(Indicator.dbnomics_provider)
                 .order_by(Indicator.dbnomics_provider.asc())
-                .limit(limit)
             )
-
-            if search:
-                query = query.where(Indicator.dbnomics_provider.ilike(f"%{search.strip()}%"))
 
         rows = (await db.execute(query)).all()
         return [
@@ -378,7 +343,7 @@ async def get_dbnomics_providers(
                 .where(Indicator.source == "DBNOMICS")
             )
 
-        symbols = (await db.execute(fallback_query.limit(limit))).scalars().all()
+        symbols = (await db.execute(fallback_query)).scalars().all()
         counts: Dict[str, int] = {}
 
         for symbol in symbols:
@@ -388,8 +353,6 @@ async def get_dbnomics_providers(
             if len(parts) < 2 or not parts[1]:
                 continue
             provider = parts[1].upper()
-            if search and search.strip().upper() not in provider:
-                continue
             counts[provider] = counts.get(provider, 0) + 1
 
         return [
@@ -432,7 +395,6 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
         if indicator.source == "YAHOO":
             return await fetch_and_store_market_data(session=db, symbol=indicator.symbol)
 
-
         if indicator.source == "WORLDBANK":
             parts = indicator.symbol.split("_", 2)
             if len(parts) == 3:
@@ -450,26 +412,6 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
 
         if indicator.source == "OECD":
             return await fetch_and_store_oecd_data(db, indicator.symbol)
-
-
-        if indicator.source == "WORLDBANK":
-            parts = indicator.symbol.split("_", 2)
-            if len(parts) == 3:
-                _, country, wb_indicator = parts
-                return await fetch_world_bank_data(db, country, wb_indicator, indicator.name)
-
-        if indicator.source == "ECB":
-            return await fetch_and_store_ecb_data(db, indicator.symbol)
-
-        if indicator.source == "DBNOMICS":
-            return await fetch_and_store_dbnomics_data(db, indicator.symbol)
-
-        if indicator.source == "IMF":
-            return await fetch_and_store_imf_data(db, indicator.symbol)
-
-        if indicator.source == "OECD":
-            return await fetch_and_store_oecd_data(db, indicator.symbol)
-
 
         if indicator.source == "BIS":
             return await fetch_and_store_bis_data(db, indicator.symbol)
