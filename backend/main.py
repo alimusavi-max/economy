@@ -8,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import engine, get_db
 from database.models import AssetMarketData, Base
+
+from routers import data_router, pipeline_router, user_router
+from services.alphavantage_service import fetch_and_store_alphavantage
+from services.bis_service import auto_discover_bis_indicators
+from services.dbnomics_service import auto_discover_all_central_banks, auto_discover_central_bank, fetch_and_store_dbnomics_data
 from routers import data_router, pipeline_router
 from services.alphavantage_service import fetch_and_store_alphavantage
 from services.bis_service import auto_discover_bis_indicators
@@ -72,6 +77,7 @@ app.add_middleware(
 
 app.include_router(data_router.router)
 app.include_router(pipeline_router.router)
+app.include_router(user_router.router)
 
 
 @app.get("/")
@@ -160,3 +166,20 @@ async def get_eur_usd_history(db: AsyncSession = Depends(get_db)):
     result = await db.execute(query)
     records = result.scalars().all()
     return {"symbol": "EUR/USD", "data": records}
+
+
+
+@app.post("/api/discover/dbnomics")
+async def trigger_dbnomics_discovery(bank_code: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    if bank_code:
+        count = await auto_discover_central_bank(db, bank_code.upper())
+        return {"success": True, "provider": bank_code.upper(), "new_indicators": count}
+
+    count = await auto_discover_all_central_banks(db)
+    return {"success": True, "provider": "ALL", "new_indicators": count}
+
+
+@app.post("/api/fetch/dbnomics/{symbol}")
+async def trigger_dbnomics_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
+    return await fetch_and_store_dbnomics_data(session=db, symbol=symbol.upper())
+

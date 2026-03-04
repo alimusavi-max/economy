@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.database import get_db
 from database.models import EconomicData, Indicator
 from services.ecb_service import fetch_and_store_ecb_data
+from services.dbnomics_service import fetch_and_store_dbnomics_data
 from services.fred_service import fetch_and_store_fred_series
 from services.market_service import fetch_and_store_market_data
 from services.worldbank_service import fetch_world_bank_data
@@ -139,6 +140,7 @@ async def get_freshness_overview(db: AsyncSession = Depends(get_db)):
 async def get_available_symbols(
     db: AsyncSession = Depends(get_db),
     source: Optional[str] = Query(default=None, description="فیلتر منبع مثل FRED/IMF/OECD"),
+    dbnomics_provider: Optional[str] = Query(default=None, description="فیلتر زیرمنبع DBNOMICS مثل CBI/SAMA/BOE"),
     with_data_only: bool = Query(default=False, description="فقط شاخص‌هایی که دیتای زمانی دارند"),
     search: Optional[str] = Query(default=None, description="جستجو روی name/symbol/source"),
     limit: int = Query(default=300, ge=1, le=2000),
@@ -150,6 +152,7 @@ async def get_available_symbols(
             Indicator.name,
             Indicator.source,
             Indicator.frequency,
+            Indicator.dbnomics_provider,
             Indicator.update_interval_days,
             Indicator.last_updated,
             func.count(EconomicData.id).label("data_points_count"),
@@ -160,6 +163,12 @@ async def get_available_symbols(
 
     if source:
         query = query.where(Indicator.source == source.upper())
+
+
+    if dbnomics_provider:
+        query = query.where(Indicator.source == "DBNOMICS")
+        query = query.where(Indicator.dbnomics_provider == dbnomics_provider.upper())
+
 
     if search:
         pattern = f"%{search.strip()}%"
@@ -175,6 +184,7 @@ async def get_available_symbols(
         Indicator.name,
         Indicator.source,
         Indicator.frequency,
+        Indicator.dbnomics_provider,
         Indicator.update_interval_days,
         Indicator.last_updated,
     )
@@ -194,6 +204,7 @@ async def get_available_symbols(
             "name": row.name,
             "source": row.source,
             "frequency": row.frequency,
+            "dbnomics_provider": row.dbnomics_provider,
             "update_interval_days": row.update_interval_days,
             "last_updated": row.last_updated,
             "data_points_count": int(row.data_points_count or 0),
@@ -244,6 +255,10 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
 
     if indicator.source == "ECB":
         return await fetch_and_store_ecb_data(db, indicator.symbol)
+
+
+    if indicator.source == "DBNOMICS":
+        return await fetch_and_store_dbnomics_data(db, indicator.symbol)
 
     raise HTTPException(
         status_code=400,

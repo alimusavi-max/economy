@@ -59,6 +59,7 @@ async def auto_discover_central_bank(session: AsyncSession, bank_code: str):
                     "symbol": f"DBN_{bank_code}_{code}"[:50],
                     "name": f"{bank_code}: {name}"[:255],
                     "source": "DBNOMICS",
+                    "dbnomics_provider": bank_code,
                     "frequency": "Mixed",
                     "update_interval_days": 15
                 })
@@ -179,21 +180,27 @@ async def auto_discover_all_central_banks(session: AsyncSession):
     print("🌍 در حال آماده‌سازی شاه‌کلید برای تمام بانک‌های مرکزی جهان...")
     
     central_banks = [
-        "BOE",      # بانک مرکزی انگلیس (Bank of England) - تایید شده ✅
-        "BOJ",      # بانک مرکزی ژاپن (Bank of Japan) - تایید شده ✅
-        "BOC",      # بانک مرکزی کانادا (Bank of Canada) - تایید شده ✅
-        "RBA",      # بانک مرکزی استرالیا (Reserve Bank of Australia) - تایید شده ✅
-        "BUBA",     # بانک مرکزی آلمان (Bundesbank) - تایید شده ✅
-        "BDF",      # بانک مرکزی فرانسه (Banque de France) - تایید شده ✅
-        "TCMB",     # بانک مرکزی ترکیه (Central Bank of Turkey) - تایید شده ✅
-        "BCB",      # بانک مرکزی برزیل (Banco Central do Brasil) - تایید شده ✅
-        "SAMA",     # سازمان پولی عربستان سعودی (Saudi Monetary Authority) - تایید شده ✅
-        "BI",       # بانک مرکزی اندونزی (Bank Indonesia) - تایید شده ✅
-        "SARB"      # بانک مرکزی آفریقای جنوبی (South African Reserve Bank) - تایید شده ✅
+        # هسته جهانی
+        "BOE", "BOJ", "BOC", "RBA", "BUBA", "BDF", "TCMB", "BCB", "SAMA", "BI", "SARB", "ECB",
+        # خاورمیانه و منطقه
+        "CBI",   # Central Bank of Iran (در DBnomics ممکن است در برخی دوره‌ها غیرفعال/غایب باشد)
+        "QCB",   # Qatar Central Bank
+        "CBUAE", # Central Bank of UAE
+        "KCB",   # Central Bank of Kuwait
+        "BOM",   # Central Bank of Oman / یا Provider مشابه
+        "CBE",   # Central Bank of Egypt
+        "JCB",   # Central Bank of Jordan
+        "BDL",   # Banque du Liban
+        "CBJ",   # Central Bank of Jordan (کد جایگزین)
+        "PBC",   # People's Bank of China
+        "BOK",   # Bank of Korea
+        "RBI",   # Reserve Bank of India
+        "BNM",   # Bank Negara Malaysia
+        "BSP",   # Bangko Sentral ng Pilipinas
     ]
 
     total_discovered = 0
-    for bank in central_banks:
+    for bank in sorted(set(central_banks)):
         try:
             count = await auto_discover_central_bank(session, bank)
             total_discovered += count
