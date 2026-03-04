@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from typing import Dict, Any
 from database.database import get_db
 from database.models import EconomicData, Indicator
 
@@ -172,3 +172,95 @@ async def get_economic_data(symbol: str, db: AsyncSession = Depends(get_db)):
         "total_records": len(chart_data),
         "data": chart_data,
     }
+
+
+@router.get("/lab/combine")
+async def combine_indicators_data(
+    sym1: str, 
+    sym2: str, 
+    operation: str, # "add", "sub", "mul", "div"
+    db: AsyncSession = Depends(get_db)
+):
+    """موتور آزمایشگاه: ترکیب دیتای دو شاخص اقتصادی"""
+    # دریافت اطلاعات شاخص اول
+    ind1_res = await db.execute(select(Indicator).where(Indicator.symbol == sym1.upper()))
+    ind1 = ind1_res.scalar_one_or_none()
+    
+    # دریافت اطلاعات شاخص دوم
+    ind2_res = await db.execute(select(Indicator).where(Indicator.symbol == sym2.upper()))
+    ind2 = ind2_res.scalar_one_or_none()
+
+    if not ind1 or not ind2:
+        raise HTTPException(status_code=404, detail="یکی از شاخص‌ها یافت نشد.")
+
+    # دریافت دیتای هر دو شاخص
+    data1_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind1.id))
+    data2_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind2.id))
+    
+    # تبدیل به دیکشنری {تاریخ: مقدار} برای تطبیق سریع
+    dict1 = {r.date: r.value for r in data1_res.scalars().all()}
+    dict2 = {r.date: r.value for r in data2_res.scalars().all()}
+    
+    # پیدا کردن تاریخ‌های مشترک
+    common_dates = sorted(list(set(dict1.keys()) & set(dict2.keys())))
+    
+    combined_data = []
+    for d in common_dates:
+        v1, v2 = dict1[d], dict2[d]
+        try:
+            if operation == "add": val = v1 + v2
+            elif operation == "sub": val = v1 - v2
+            elif operation == "mul": val = v1 * v2
+            elif operation == "div": val = v1 / v2 if v2 != 0 else 0
+            else: continue
+            
+            combined_data.append({"date": str(d), "value": round(val, 4)})
+        except Exception:
+            continue
+            
+    return combined_data
+
+class FormulaRequest(BaseModel):
+    formula: str
+    variables: Dict[str, str]
+
+@router.post("/lab/formula")
+async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Depends(get_db)):
+    """موتور پیشرفته آزمایشگاه: محاسبه فرمول‌های ریاضی سفارشی روی دیتای سری زمانی"""
+    import math
+    
+    series_data = {}
+    
+    # ۱. استخراج دیتای تمام متغیرهای ارسال شده (مثل A, B, C)
+    for var_name, symbol in request.variables.items():
+        ind_res = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+        ind = ind_res.scalar_one_or_none()
+        if not ind:
+            raise HTTPException(status_code=404, detail=f"نماد {symbol} یافت نشد.")
+        
+        data_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind.id))
+        records = data_res.scalars().all()
+        series_data[var_name] = {r.date: r.value for r in records}
+    
+    if not series_data:
+        return []
+        
+    # ۲. پیدا کردن تاریخ‌های مشترک بین تمام شاخص‌ها
+    common_dates = set.intersection(*[set(d.keys()) for d in series_data.values()])
+    common_dates = sorted(list(common_dates))
+    
+    # محیط امن برای اجرای فرمول ریاضی
+    safe_math_env = {k: getattr(math, k) for k in dir(math) if not k.startswith("__")}
+    
+    combined_data = []
+    for d in common_dates:
+        # جایگذاری مقدار هر متغیر در آن تاریخ خاص
+        local_vars = {var_name: series_data[var_name][d] for var_name in request.variables.keys()}
+        try:
+            # اجرای فرمول (مثلا A / B * 100)
+            val = eval(request.formula, {"__builtins__": {}}, {**safe_math_env, **local_vars})
+            combined_data.append({"date": str(d), "value": round(val, 4)})
+        except Exception as e:
+            continue
+            
+    return combined_data

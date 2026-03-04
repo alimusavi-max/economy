@@ -27,6 +27,12 @@ from services.scheduler_service import start_scheduler
 from database.models import AssetMarketData
 from services.bis_service import auto_discover_bis_indicators
 
+from fastapi import HTTPException
+from typing import List
+
+# ایمپورت‌های دیتابیس شما (ممکن است در فایل شما کمی متفاوت باشد، تنظیمش کنید)
+from database.database import AsyncSessionLocal
+from database.models import Indicator, EconomicData
 # === تابع اصلی کاوشگر جهانی (Spider) ===
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
     print(f"شروع عملیات کاوشگر برای منبع: {source}")
@@ -215,3 +221,75 @@ async def get_eur_usd_history(db: AsyncSession = Depends(get_db)):
     records = result.scalars().all()
     
     return {"symbol": "EUR/USD", "data": records}
+
+
+
+
+
+
+app = FastAPI(title="Macro Economy Lab API")
+
+# تابع وابستگی برای گرفتن سشن دیتابیس
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+        
+@app.get("/api/indicators")
+async def get_indicators(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Indicator).order_by(Indicator.source, Indicator.symbol))
+    indicators = result.scalars().all()
+    return indicators
+
+# ۲. مسیر دریافت دیتای تاریخی یک شاخص خاص (برای رسم چارت)
+@app.get("/api/data/{indicator_id}")
+async def get_indicator_data(indicator_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(EconomicData)
+        .where(EconomicData.indicator_id == indicator_id)
+        .order_by(EconomicData.date)
+    )
+    data = result.scalars().all()
+    
+    if not data:
+        raise HTTPException(status_code=404, detail="دیتایی برای این شاخص یافت نشد.")
+        
+    # فرمت کردن دیتا برای کتابخانه‌های چارت فرانت‌اند (مثل Recharts یا TradingView)
+    chart_data = [{"date": str(row.date), "value": row.value} for row in data]
+    return chart_data
+
+# ۳. 🧪 موتور آزمایشگاه: ترکیب دو شاخص با عملیات ریاضی (جمع، تفریق، ضرب، تقسیم)
+@app.get("/api/lab/combine")
+async def combine_indicators(
+    id1: int, 
+    id2: int, 
+    operation: str, # "add", "sub", "mul", "div"
+    db: AsyncSession = Depends(get_db)
+):
+    # دریافت دیتای هر دو شاخص
+    data1 = await get_indicator_data(id1, db)
+    data2 = await get_indicator_data(id2, db)
+    
+    # تبدیل لیست‌ها به دیکشنری بر اساس تاریخ برای تطبیق (Alignment) زمان‌ها
+    dict1 = {item["date"]: item["value"] for item in data1}
+    dict2 = {item["date"]: item["value"] for item in data2}
+    
+    # پیدا کردن تاریخ‌های مشترک
+    common_dates = sorted(list(set(dict1.keys()) & set(dict2.keys())))
+    
+    combined_data = []
+    for date_str in common_dates:
+        v1 = dict1[date_str]
+        v2 = dict2[date_str]
+        
+        try:
+            if operation == "add": result = v1 + v2
+            elif operation == "sub": result = v1 - v2
+            elif operation == "mul": result = v1 * v2
+            elif operation == "div": result = v1 / v2 if v2 != 0 else 0
+            else: raise HTTPException(status_code=400, detail="عملیات نامعتبر است")
+            
+            combined_data.append({"date": date_str, "value": round(result, 4)})
+        except Exception:
+            continue
+            
+    return combined_data
