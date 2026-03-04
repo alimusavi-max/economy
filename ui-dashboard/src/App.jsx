@@ -14,21 +14,55 @@ import {
   XAxis,
   YAxis
 } from 'recharts'
-import { Activity, FlaskConical, LogOut, RefreshCcw, Search, SlidersHorizontal, UserPlus, Users, WandSparkles } from 'lucide-react'
+import {
+  Activity,
+  FlaskConical,
+  LogOut,
+  Maximize2,
+  Minimize2,
+  RefreshCcw,
+  Search,
+  SlidersHorizontal,
+  UserPlus,
+  Users,
+  WandSparkles
+} from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
-
 const ACTIVE_USER_STORAGE_KEY = 'economy_active_user_id'
 
-const extractErrorMessage = (err, fallback) => {
-  if (err?.response?.data?.detail) return err.response.data.detail
-  if (err?.message) return err.message
-  return fallback
-}
+const CHART_RANGES = [
+  { key: '1M', label: '۱ ماه', days: 31 },
+  { key: '3M', label: '۳ ماه', days: 93 },
+  { key: '1Y', label: '۱ سال', days: 366 },
+  { key: '5Y', label: '۵ سال', days: 365 * 5 },
+  { key: 'ALL', label: 'کل', days: Infinity }
+]
 
-const sourceSupportsManualRefresh = (source) => ['FRED', 'YAHOO', 'WORLDBANK', 'ECB', 'DBNOMICS'].includes(source)
+const extractErrorMessage = (err, fallback) => err?.response?.data?.detail || err?.message || fallback
 const formatCompactNumber = (value) => Intl.NumberFormat('fa-IR', { notation: 'compact', maximumFractionDigits: 2 }).format(value || 0)
 const formatPreciseNumber = (value) => Intl.NumberFormat('fa-IR', { maximumFractionDigits: 4 }).format(value || 0)
+const sourceSupportsManualRefresh = (source) => ['FRED', 'YAHOO', 'WORLDBANK', 'ECB', 'DBNOMICS', 'IMF', 'OECD', 'BIS', 'EUROSTAT', 'ALPHAVANTAGE'].includes(source)
+
+const withRetry = async (fn, retries = 1) => {
+  let lastErr
+  for (let i = 0; i <= retries; i += 1) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  throw lastErr
+}
+
+const filterChartByRange = (data, rangeKey) => {
+  const range = CHART_RANGES.find((r) => r.key === rangeKey) || CHART_RANGES.at(-1)
+  if (!data?.length || !Number.isFinite(range.days)) return data || []
+  const lastTs = new Date(data[data.length - 1].date).getTime()
+  const minTs = lastTs - range.days * 24 * 60 * 60 * 1000
+  return data.filter((item) => new Date(item.date).getTime() >= minTs)
+}
 
 export default function App() {
   const [summary, setSummary] = useState(null)
@@ -40,9 +74,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [sourceFilter, setSourceFilter] = useState('')
   const [dbnomicsProviderFilter, setDbnomicsProviderFilter] = useState('')
+  const [dbnomicsProviderSearch, setDbnomicsProviderSearch] = useState('')
   const [dbnomicsProviders, setDbnomicsProviders] = useState([])
   const [search, setSearch] = useState('')
   const [withDataOnly, setWithDataOnly] = useState(false)
+
+  const [symbolsPage, setSymbolsPage] = useState(1)
+  const [symbolsPageSize, setSymbolsPageSize] = useState(100)
+  const [symbolsTotalPages, setSymbolsTotalPages] = useState(1)
+  const [symbolsTotal, setSymbolsTotal] = useState(0)
 
   const [users, setUsers] = useState([])
   const [selectedUserId, setSelectedUserId] = useState('')
@@ -50,20 +90,26 @@ export default function App() {
   const [newUsername, setNewUsername] = useState('')
   const [newDisplayName, setNewDisplayName] = useState('')
   const [defaultDashboardSymbols, setDefaultDashboardSymbols] = useState([])
-
-  const [selectedSymbol, setSelectedSymbol] = useState('')
-  const [chartData, setChartData] = useState([])
   const [dashboardCharts, setDashboardCharts] = useState([])
-  const [chartLoading, setChartLoading] = useState(false)
+  const [dashboardRanges, setDashboardRanges] = useState({})
+
+  const [expandedChartOpen, setExpandedChartOpen] = useState(false)
+  const [expandedChartSymbol, setExpandedChartSymbol] = useState('')
+  const [expandedChartData, setExpandedChartData] = useState([])
+  const [expandedChartRange, setExpandedChartRange] = useState('ALL')
 
   const [variables, setVariables] = useState([{ id: 'A', symbol: '' }, { id: 'B', symbol: '' }])
   const [formula, setFormula] = useState('(A / B) * 100')
   const [labData, setLabData] = useState([])
   const [backendConnected, setBackendConnected] = useState(null)
 
-
   const activeUser = useMemo(() => users.find((u) => String(u.id) === String(selectedUserId)) || null, [users, selectedUserId])
   const isLoggedIn = !!activeUser
+
+  const fetchSymbolChart = useCallback(async (symbol) => {
+    const res = await withRetry(() => axios.get(`${API_BASE}/data/${symbol}`), 1)
+    return res.data?.data || []
+  }, [])
 
   const loadUsers = useCallback(async () => {
     const res = await axios.get(`${API_BASE}/users`)
@@ -78,26 +124,34 @@ export default function App() {
     }
 
     if (!storedUserId && !loginUserId && allUsers.length) {
-      setLoginUserId(String(allUsers[0].id))
-      // افزودن کاربر اول به عنوان انتخاب شده در صورت لاگین نبودن
-      if (!selectedUserId) setSelectedUserId(String(allUsers[0].id))
+      const firstId = String(allUsers[0].id)
+      setLoginUserId(firstId)
+      if (!selectedUserId) setSelectedUserId(firstId)
     }
   }, [loginUserId, selectedUserId])
 
   const loadDbnomicsProviders = useCallback(async () => {
+    if (sourceFilter !== 'DBNOMICS') return
     try {
-      const params = withDataOnly ? { with_data_only: true } : {}
+      const params = { limit: 20000 }
+      if (dbnomicsProviderSearch.trim()) params.search = dbnomicsProviderSearch.trim()
+      if (withDataOnly) params.with_data_only = true
       const res = await axios.get(`${API_BASE}/data/dbnomics/providers`, { params })
       setDbnomicsProviders(res.data || [])
     } catch {
       setDbnomicsProviders([])
     }
-  }, [withDataOnly])
+  }, [dbnomicsProviderSearch, sourceFilter, withDataOnly])
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
     try {
-      const params = { limit: 1000 }
+      const params = {
+        paginated: true,
+        page: symbolsPage,
+        page_size: symbolsPageSize,
+        limit: 10000
+      }
       if (sourceFilter) params.source = sourceFilter
       if (dbnomicsProviderFilter && sourceFilter === 'DBNOMICS') params.dbnomics_provider = dbnomicsProviderFilter
       if (search.trim()) params.search = search.trim()
@@ -111,7 +165,9 @@ export default function App() {
 
       setSummary(summaryRes.data)
       setFreshness(freshnessRes.data)
-      setSymbols(symbolsRes.data)
+      setSymbols(symbolsRes.data?.items || [])
+      setSymbolsTotal(symbolsRes.data?.pagination?.total || 0)
+      setSymbolsTotalPages(symbolsRes.data?.pagination?.total_pages || 1)
       setBackendConnected(true)
       setMessage('')
     } catch (err) {
@@ -119,11 +175,11 @@ export default function App() {
       setSummary(null)
       setFreshness(null)
       setSymbols([])
-      setMessage(extractErrorMessage(err, 'خطا در بارگذاری داشبورد. ارتباط فرانت با بک‌اند برقرار نیست یا API در دسترس نیست.'))
+      setMessage(extractErrorMessage(err, 'خطا در بارگذاری داشبورد.'))
     } finally {
       setLoading(false)
     }
-  }, [dbnomicsProviderFilter, search, sourceFilter, withDataOnly])
+  }, [dbnomicsProviderFilter, search, sourceFilter, symbolsPage, symbolsPageSize, withDataOnly])
 
   const loadUserDashboard = useCallback(async (userId) => {
     if (!userId) return
@@ -131,45 +187,29 @@ export default function App() {
       const res = await axios.get(`${API_BASE}/users/${userId}/dashboard`)
       const symbolsFromUser = res.data?.symbols || []
       setDefaultDashboardSymbols(symbolsFromUser)
-      if (!selectedSymbol && symbolsFromUser.length) setSelectedSymbol(symbolsFromUser[0])
 
       const chartPromises = symbolsFromUser.slice(0, 12).map(async (sym) => {
         try {
-          const chartRes = await axios.get(`${API_BASE}/data/${sym}`)
-          return { symbol: sym, data: chartRes.data?.data || [] }
-        } catch {
-          return { symbol: sym, data: [] }
+          const data = await fetchSymbolChart(sym)
+          return { symbol: sym, data, error: null }
+        } catch (err) {
+          return { symbol: sym, data: [], error: extractErrorMessage(err, 'داده دریافت نشد') }
         }
       })
+
       setDashboardCharts(await Promise.all(chartPromises))
     } catch {
       setDefaultDashboardSymbols([])
       setDashboardCharts([])
     }
-  }, [selectedSymbol])
+  }, [fetchSymbolChart])
 
-  useEffect(() => {
-    Promise.all([loadUsers(), loadDashboard()]).catch(() => null)
-  }, [loadDashboard, loadUsers])
-
-  useEffect(() => {
-    if (sourceFilter === 'DBNOMICS') {
-      loadDbnomicsProviders().catch(() => null)
-    } else {
-      setDbnomicsProviderFilter('')
-    }
-  }, [loadDbnomicsProviders, sourceFilter])
-
-  useEffect(() => {
-    if (selectedUserId) loadUserDashboard(selectedUserId)
-  }, [loadUserDashboard, selectedUserId])
+  useEffect(() => { Promise.all([loadUsers(), loadDashboard()]).catch(() => null) }, [loadDashboard, loadUsers])
+  useEffect(() => { if (sourceFilter === 'DBNOMICS') loadDbnomicsProviders().catch(() => null); else { setDbnomicsProviderFilter(''); setDbnomicsProviders([]) } }, [loadDbnomicsProviders, sourceFilter])
+  useEffect(() => { if (selectedUserId) loadUserDashboard(selectedUserId) }, [loadUserDashboard, selectedUserId])
 
   const persistDashboardSymbols = useCallback(async (nextSymbols, successMessage) => {
-    if (!selectedUserId) {
-      setMessage('ابتدا وارد حساب کاربری خودت شو.')
-      return
-    }
-
+    if (!selectedUserId) return setMessage('ابتدا وارد حساب کاربری خودت شو.')
     try {
       await axios.put(`${API_BASE}/users/${selectedUserId}/dashboard`, { symbols: nextSymbols })
       setDefaultDashboardSymbols(nextSymbols)
@@ -180,22 +220,12 @@ export default function App() {
     }
   }, [loadUserDashboard, selectedUserId])
 
-  useEffect(() => {
-    if (!selectedSymbol) return
-    setChartLoading(true)
-    axios
-      .get(`${API_BASE}/data/${selectedSymbol}`)
-      .then((res) => setChartData(res.data.data || []))
-      .catch(() => setChartData([]))
-      .finally(() => setChartLoading(false))
-  }, [selectedSymbol])
-
-  const availableSources = useMemo(() => (summary?.sources || []).map((s) => s.source), [summary])
-
   const runPipeline = async (path, successMessage) => {
     try {
       await axios.post(`${API_BASE}${path}`)
       setMessage(successMessage)
+      await loadDashboard()
+      if (selectedUserId) await loadUserDashboard(selectedUserId)
     } catch (err) {
       setMessage(extractErrorMessage(err, 'ارسال دستور انجام نشد.'))
     }
@@ -210,11 +240,26 @@ export default function App() {
   const refreshNow = async (symbol) => {
     try {
       await axios.post(`${API_BASE}/data/symbols/${symbol}/refresh-now`)
-      setMessage(`دستور دریافت فوری برای ${symbol} ارسال شد.`)
+      setMessage(`دریافت فوری ${symbol} انجام شد.`)
       await loadDashboard()
       if (selectedUserId) await loadUserDashboard(selectedUserId)
     } catch (err) {
-      setMessage(extractErrorMessage(err, 'رفرش فوری برای این منبع پشتیبانی نمی‌شود.'))
+      setMessage(extractErrorMessage(err, 'رفرش فوری ناموفق بود.'))
+    }
+  }
+
+  const openExpandedChart = async (symbol, initialData = null) => {
+    setExpandedChartSymbol(symbol)
+    setExpandedChartRange('ALL')
+    setExpandedChartOpen(true)
+    if (initialData?.length) {
+      setExpandedChartData(initialData)
+      return
+    }
+    try {
+      setExpandedChartData(await fetchSymbolChart(symbol))
+    } catch {
+      setExpandedChartData([])
     }
   }
 
@@ -225,9 +270,7 @@ export default function App() {
       setNewDisplayName('')
       await loadUsers()
       const createdUserId = String(res.data?.id || '')
-      if (createdUserId) {
-        setLoginUserId(createdUserId)
-      }
+      if (createdUserId) setLoginUserId(createdUserId)
       setMessage('کاربر جدید ساخته شد.')
     } catch (err) {
       setMessage(extractErrorMessage(err, 'ساخت کاربر ناموفق بود.'))
@@ -251,29 +294,15 @@ export default function App() {
     setMessage('خروج انجام شد.')
   }
 
-  const saveDefaultDashboard = async () => {
-    await persistDashboardSymbols(defaultDashboardSymbols, 'داشبورد پیش‌فرض کاربر ذخیره شد.')
-  }
-
   const addSymbolToDashboard = async (symbol) => {
     if (defaultDashboardSymbols.includes(symbol)) return
     if (defaultDashboardSymbols.length >= 12) return setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد انتخاب کنی.')
-
-    const nextSymbols = [...defaultDashboardSymbols, symbol]
-    await persistDashboardSymbols(nextSymbols, `${symbol} به داشبوردت اضافه شد.`)
+    await persistDashboardSymbols([...defaultDashboardSymbols, symbol], `${symbol} به داشبوردت اضافه شد.`)
   }
 
   const removeSymbolFromDashboard = async (symbol) => {
-    const nextSymbols = defaultDashboardSymbols.filter((item) => item !== symbol)
-    await persistDashboardSymbols(nextSymbols, `${symbol} از داشبورد حذف شد.`)
+    await persistDashboardSymbols(defaultDashboardSymbols.filter((item) => item !== symbol), `${symbol} از داشبورد حذف شد.`)
   }
-
-  const chartAverage = useMemo(() => {
-    if (!chartData.length) return null
-    const valid = chartData.map((item) => Number(item.value)).filter((val) => Number.isFinite(val))
-    if (!valid.length) return null
-    return valid.reduce((sum, val) => sum + val, 0) / valid.length
-  }, [chartData])
 
   const runFormula = async () => {
     const variablesPayload = {}
@@ -291,35 +320,24 @@ export default function App() {
     }
   }
 
+  const availableSources = useMemo(() => (summary?.sources || []).map((s) => s.source), [summary])
+  const expandedRangeData = useMemo(() => filterChartByRange(expandedChartData, expandedChartRange), [expandedChartData, expandedChartRange])
+  const expandedAverage = useMemo(() => {
+    const values = expandedRangeData.map((item) => Number(item.value)).filter((item) => Number.isFinite(item))
+    return values.length ? values.reduce((sum, val) => sum + val, 0) / values.length : null
+  }, [expandedRangeData])
+
   if (!isLoggedIn) {
-    return (
-      <LoginView
-        users={users}
-        loginUserId={loginUserId}
-        setLoginUserId={setLoginUserId}
-        login={login}
-        newUsername={newUsername}
-        setNewUsername={setNewUsername}
-        newDisplayName={newDisplayName}
-        setNewDisplayName={setNewDisplayName}
-        addUser={addUser}
-        backendConnected={backendConnected}
-        message={message}
-      />
-    )
+    return <LoginView {...{ users, loginUserId, setLoginUserId, login, newUsername, setNewUsername, newDisplayName, setNewDisplayName, addUser, backendConnected, message }} />
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6" dir="rtl">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 p-6" dir="rtl">
       <div className="max-w-7xl mx-auto space-y-6">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2"><Activity className="text-cyan-400" /> پنل اقتصاد جهانی</h1>
             <p className="text-slate-400 text-sm">کاربر: <span className="text-cyan-300">{activeUser?.display_name}</span> ({activeUser?.username})</p>
-            <p className="text-slate-400 text-sm">چندکاربره + داشبورد شخصی + فیلتر DBNOMICS + آزمایشگاه</p>
-            <p className={`text-xs mt-1 ${backendConnected === false ? 'text-rose-400' : 'text-emerald-400'}`}>
-              {backendConnected === false ? 'ارتباط با بک‌اند قطع است' : backendConnected === true ? `اتصال API برقرار است (${API_BASE})` : 'وضعیت اتصال در حال بررسی...'}
-            </p>
           </div>
           <div className="flex gap-2 flex-wrap">
             <button className="px-4 py-2 bg-slate-800 rounded-lg" onClick={loadDashboard}><RefreshCcw size={16} className="inline ml-1" /> رفرش</button>
@@ -329,15 +347,10 @@ export default function App() {
           </div>
         </header>
 
-        {message && <div className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-sm">{message}</div>}
+        {message && <div className="bg-slate-900/80 border border-slate-700 rounded-lg px-4 py-2 text-sm">{message}</div>}
 
         <div className="flex gap-2">
-          {[
-            ['dashboard', 'داشبورد من'],
-            ['manage', 'مدیریت شاخص‌ها'],
-            ['users', 'تنظیمات حساب'],
-            ['lab', 'آزمایشگاه']
-          ].map(([key, label]) => (
+          {[['dashboard', 'داشبورد من'], ['manage', 'مدیریت شاخص‌ها'], ['users', 'تنظیمات حساب'], ['lab', 'آزمایشگاه']].map(([key, label]) => (
             <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-lg ${activeTab === key ? 'bg-cyan-700' : 'bg-slate-800'}`}>{label}</button>
           ))}
         </div>
@@ -352,102 +365,83 @@ export default function App() {
               <StatCard title="بدون آپدیت" value={freshness?.totals?.never_updated} />
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-4">
               <h3 className="font-semibold mb-3 flex items-center gap-2"><Users size={16} /> داشبورد پیش‌فرض من</h3>
-              {dashboardCharts.length === 0 ? <div className="text-slate-400 text-sm">برای حساب شما هنوز نمودار پیش‌فرض تنظیم نشده.</div> : (
+              {dashboardCharts.length === 0 ? (
+                <div className="text-slate-400 text-sm">برای حساب شما هنوز نمودار پیش‌فرض تنظیم نشده.</div>
+              ) : (
                 <div className="grid lg:grid-cols-2 gap-4">
-                  {dashboardCharts.map((c) => (
-                    <div key={c.symbol} className="h-[240px] bg-slate-950 rounded-lg p-2">
-                      <div className="text-xs text-slate-300 mb-1 flex items-center justify-between">
-                        <span>{c.symbol}</span>
-                        <span className="text-slate-400">{c.data.length ? formatCompactNumber(c.data.at(-1)?.value) : 'بدون داده'}</span>
+                  {dashboardCharts.map((chart) => {
+                    const rangeKey = dashboardRanges[chart.symbol] || 'ALL'
+                    const dataInRange = filterChartByRange(chart.data, rangeKey)
+                    const lastValue = dataInRange.length ? dataInRange[dataInRange.length - 1].value : null
+
+                    return (
+                      <div key={chart.symbol} className="h-[320px] bg-slate-950 rounded-lg p-2 border border-slate-800">
+                        <div className="text-xs text-slate-300 mb-2 flex items-center justify-between">
+                          <span className="font-semibold">{chart.symbol}</span>
+                          <span className="text-cyan-300">{lastValue !== null ? `آخرین: ${formatPreciseNumber(lastValue)}` : chart.error || 'بدون داده'}</span>
+                        </div>
+                        <div className="flex items-center gap-1 mb-2 flex-wrap">
+                          {CHART_RANGES.map((range) => (
+                            <button
+                              key={range.key}
+                              onClick={() => setDashboardRanges((prev) => ({ ...prev, [chart.symbol]: range.key }))}
+                              className={`px-2 py-1 rounded text-[11px] ${rangeKey === range.key ? 'bg-cyan-700' : 'bg-slate-800'}`}
+                            >
+                              {range.label}
+                            </button>
+                          ))}
+                          <button className="px-2 py-1 bg-indigo-700 rounded text-[11px]" onClick={() => openExpandedChart(chart.symbol, chart.data)}><Maximize2 size={12} /></button>
+                          <button className="px-2 py-1 bg-rose-700 rounded text-[11px]" onClick={() => removeSymbolFromDashboard(chart.symbol)}>حذف</button>
+                        </div>
+                        <ResponsiveContainer width="100%" height="74%">
+                          <AreaChart data={dataInRange}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                            <XAxis dataKey="date" stroke="#94a3b8" hide />
+                            <YAxis stroke="#94a3b8" width={44} tickFormatter={formatCompactNumber} />
+                            <Tooltip formatter={(value) => formatPreciseNumber(value)} />
+                            <Area dataKey="value" stroke="#38bdf8" fill="#38bdf833" />
+                            <Line type="monotone" dataKey="value" stroke="#22d3ee" dot={false} strokeWidth={1.7} />
+                          </AreaChart>
+                        </ResponsiveContainer>
                       </div>
-                      <ResponsiveContainer width="100%" height="90%">
-                        <AreaChart data={c.data}>
-                          <defs>
-                            <linearGradient id={`mini-${c.symbol}`} x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="10%" stopColor="#38bdf8" stopOpacity={0.4} />
-                              <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                          <XAxis dataKey="date" stroke="#94a3b8" hide />
-                          <YAxis stroke="#94a3b8" width={42} tickFormatter={formatCompactNumber} />
-                          <Tooltip formatter={(value) => formatPreciseNumber(value)} />
-                          <Area dataKey="value" stroke="#38bdf8" fill={`url(#mini-${c.symbol})`} />
-                          <Line type="monotone" dataKey="value" stroke="#22d3ee" dot={false} strokeWidth={1.7} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
 
-            <div className="grid lg:grid-cols-3 gap-4">
-              <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4 h-[360px]">
-                {!selectedSymbol ? (
-                  <div className="h-full flex items-center justify-center text-slate-400">از تب مدیریت یک نماد انتخاب کن تا نمودارش اینجا نمایش داده شود.</div>
-                ) : chartLoading ? (
-                  <div className="h-full flex items-center justify-center text-slate-400">در حال دریافت نمودار...</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartData}>
-                      <defs><linearGradient id="v" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22d3ee" stopOpacity={0.6} /><stop offset="95%" stopColor="#22d3ee" stopOpacity={0} /></linearGradient></defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis dataKey="date" stroke="#94a3b8" minTickGap={32} />
-                      <YAxis stroke="#94a3b8" tickFormatter={formatCompactNumber} width={72} />
-                      <Tooltip formatter={(value) => formatPreciseNumber(value)} />
-                      <Legend />
-                      {chartAverage !== null && <ReferenceLine y={chartAverage} label="میانگین" stroke="#f59e0b" strokeDasharray="4 4" />}
-                      <Area name="حجم کلی" dataKey="value" stroke="#22d3ee" fill="url(#v)" />
-                      <Line name="روند دقیق" type="monotone" dataKey="value" stroke="#06b6d4" dot={false} strokeWidth={2} />
-                      <Brush dataKey="date" height={20} stroke="#06b6d4" travellerWidth={8} />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
-                <h3 className="font-semibold flex items-center gap-2"><WandSparkles size={16} /> سلامت فید جهانی</h3>
-                <ul className="text-sm text-slate-300 space-y-1">
-                  <li>سالم: {freshness?.totals?.healthy ?? '-'}</li>
-                  <li>نزدیک سررسید: {freshness?.totals?.due_soon ?? '-'}</li>
-                  <li>دیرهنگام: {freshness?.totals?.stale ?? '-'}</li>
-                  <li>بدون آپدیت: {freshness?.totals?.never_updated ?? '-'}</li>
-                </ul>
-              </div>
+            <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-4">
+              <h3 className="font-semibold flex items-center gap-2"><WandSparkles size={16} /> سلامت فید جهانی</h3>
+              <ul className="text-sm text-slate-300 space-y-1 mt-2">
+                <li>سالم: {freshness?.totals?.healthy ?? '-'}</li>
+                <li>نزدیک سررسید: {freshness?.totals?.due_soon ?? '-'}</li>
+                <li>دیرهنگام: {freshness?.totals?.stale ?? '-'}</li>
+                <li>بدون آپدیت: {freshness?.totals?.never_updated ?? '-'}</li>
+              </ul>
             </div>
           </section>
         )}
 
         {activeTab === 'manage' && (
-          <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
-            <div className="grid md:grid-cols-5 gap-3">
-              <label className="bg-slate-950 rounded-lg px-3 py-2 flex items-center gap-2"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="جستجو" className="bg-transparent w-full outline-none" /></label>
-              <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="bg-slate-950 rounded-lg px-3 py-2">
-                <option value="">همه منابع</option>
-                {availableSources.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <select
-                value={dbnomicsProviderFilter}
-                onChange={(e) => setDbnomicsProviderFilter(e.target.value)}
-                disabled={sourceFilter !== 'DBNOMICS'}
-                className="bg-slate-950 rounded-lg px-3 py-2 disabled:opacity-50"
-              >
+          <section className="bg-slate-900/80 border border-slate-700 rounded-xl p-4 space-y-4">
+            <div className="grid md:grid-cols-7 gap-3">
+              <label className="bg-slate-950 rounded-lg px-3 py-2 flex items-center gap-2"><Search size={16} /><input value={search} onChange={(e) => { setSearch(e.target.value); setSymbolsPage(1) }} placeholder="جستجو" className="bg-transparent w-full outline-none" /></label>
+              <select value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setSymbolsPage(1) }} className="bg-slate-950 rounded-lg px-3 py-2"><option value="">همه منابع</option>{availableSources.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+              <input value={dbnomicsProviderSearch} onChange={(e) => setDbnomicsProviderSearch(e.target.value)} placeholder="جستجو زیرمنبع DBNOMICS" disabled={sourceFilter !== 'DBNOMICS'} className="bg-slate-950 rounded-lg px-3 py-2 disabled:opacity-50" />
+              <select value={dbnomicsProviderFilter} onChange={(e) => { setDbnomicsProviderFilter(e.target.value); setSymbolsPage(1) }} disabled={sourceFilter !== 'DBNOMICS'} className="bg-slate-950 rounded-lg px-3 py-2 disabled:opacity-50">
                 <option value="">زیرمنبع DBNOMICS</option>
                 {dbnomicsProviders.map((item) => <option key={item.provider} value={item.provider}>{item.provider} ({item.indicators})</option>)}
               </select>
-              <label className="bg-slate-950 rounded-lg px-3 py-2 flex items-center gap-2"><SlidersHorizontal size={16} />
-                <input type="checkbox" checked={withDataOnly} onChange={(e) => setWithDataOnly(e.target.checked)} /> فقط دارای دیتا
-              </label>
+              <label className="bg-slate-950 rounded-lg px-3 py-2 flex items-center gap-2"><SlidersHorizontal size={16} /><input type="checkbox" checked={withDataOnly} onChange={(e) => { setWithDataOnly(e.target.checked); setSymbolsPage(1) }} /> فقط دارای دیتا</label>
+              <select value={symbolsPageSize} onChange={(e) => { setSymbolsPageSize(Number(e.target.value)); setSymbolsPage(1) }} className="bg-slate-950 rounded-lg px-3 py-2"><option value={50}>۵۰</option><option value={100}>۱۰۰</option><option value={200}>۲۰۰</option><option value={500}>۵۰۰</option></select>
               <button className="bg-cyan-700 rounded-lg px-3 py-2" onClick={loadDashboard}>اعمال فیلتر</button>
             </div>
 
-            {sourceFilter === 'DBNOMICS' && (
-              <div className="text-xs text-slate-400">زیرمنبع‌ها به‌صورت پویا از بک‌اند خوانده می‌شوند. اگر تازه کاوش کردی، یک بار «رفرش» بزن.</div>
-            )}
+            {sourceFilter === 'DBNOMICS' && <div className="text-xs text-slate-400">برای زیرمنبع‌های خیلی زیاد، ابتدا در فیلد جستجو یک بخش از نام زیرمنبع را وارد کن.</div>}
 
-            <div className="overflow-auto max-h-[520px]">
+            <div className="overflow-auto max-h-[560px]">
               <table className="w-full text-sm">
                 <thead className="text-slate-400"><tr><th className="text-right p-2">نماد</th><th className="text-right p-2">نام</th><th className="text-right p-2">منبع</th><th className="text-right p-2">زیرمنبع</th><th className="text-right p-2">آپدیت خودکار</th><th className="text-right p-2">عملیات</th></tr></thead>
                 <tbody>
@@ -457,20 +451,28 @@ export default function App() {
                       <td className="p-2">{row.name}</td>
                       <td className="p-2">{row.source}</td>
                       <td className="p-2">{row.dbnomics_provider || '-'}</td>
-                      <td className="p-2">
-                        <input defaultValue={row.update_interval_days} type="number" min="1" className="w-20 bg-slate-950 rounded px-2 py-1" onBlur={(e) => changeInterval(row.symbol, e.target.value)} /> روز
-                      </td>
+                      <td className="p-2"><input defaultValue={row.update_interval_days} type="number" min="1" className="w-20 bg-slate-950 rounded px-2 py-1" onBlur={(e) => changeInterval(row.symbol, e.target.value)} /> روز</td>
                       <td className="p-2 flex flex-wrap gap-2">
-                        <button onClick={() => setSelectedSymbol(row.symbol)} className="px-2 py-1 bg-slate-800 rounded">نمایش</button>
+                        <button onClick={() => openExpandedChart(row.symbol)} className="px-2 py-1 bg-slate-800 rounded">نمایش</button>
                         <button disabled={!sourceSupportsManualRefresh(row.source)} onClick={() => refreshNow(row.symbol)} className="px-2 py-1 bg-emerald-700 disabled:bg-slate-700 rounded">دریافت فوری</button>
-                        <button onClick={() => addSymbolToDashboard(row.symbol)} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد من</button>
+                        <button onClick={() => addSymbolToDashboard(row.symbol)} className="px-2 py-1 bg-indigo-700 rounded">افزودن</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {!loading && symbols.length === 0 && <div className="text-sm text-amber-300">هیچ نمادی پیدا نشد. فیلترها را کم کن یا گزینه «فقط دارای دیتا» را خاموش کن.</div>}
+
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-slate-400">تعداد کل شاخص‌ها: {symbolsTotal}</span>
+              <div className="flex items-center gap-2">
+                <button disabled={symbolsPage <= 1} onClick={() => setSymbolsPage((p) => Math.max(1, p - 1))} className="px-2 py-1 bg-slate-800 rounded disabled:opacity-40">قبلی</button>
+                <span>{symbolsPage} / {symbolsTotalPages}</span>
+                <button disabled={symbolsPage >= symbolsTotalPages} onClick={() => setSymbolsPage((p) => Math.min(symbolsTotalPages, p + 1))} className="px-2 py-1 bg-slate-800 rounded disabled:opacity-40">بعدی</button>
+              </div>
+            </div>
+
+            {!loading && symbols.length === 0 && <div className="text-sm text-amber-300">هیچ نمادی پیدا نشد.</div>}
             {loading && <div className="text-sm text-slate-400">در حال دریافت لیست...</div>}
           </section>
         )}
@@ -487,7 +489,6 @@ export default function App() {
               <h3 className="font-semibold">داشبورد اختصاصی من</h3>
               <div className="text-xs text-slate-400">نمادهای پیش‌فرض (حداکثر ۱۲):</div>
               <div className="flex gap-2 flex-wrap">{defaultDashboardSymbols.map((s) => <button key={s} onClick={() => removeSymbolFromDashboard(s)} className="px-2 py-1 rounded bg-slate-800 text-xs">{s} ✕</button>)}</div>
-              <button className="px-3 py-2 bg-emerald-700 rounded" onClick={saveDefaultDashboard}>ذخیره داشبورد من</button>
             </div>
           </section>
         )}
@@ -508,12 +509,10 @@ export default function App() {
               ))}
             </div>
             <button className="px-3 py-1 bg-slate-800 rounded" onClick={() => setVariables((prev) => [...prev, { id: String.fromCharCode(65 + prev.length), symbol: '' }])}>افزودن متغیر</button>
-
             <div className="flex gap-2">
               <input value={formula} onChange={(e) => setFormula(e.target.value)} className="flex-1 bg-slate-950 rounded-lg px-3 py-2 font-mono" />
               <button className="px-4 py-2 bg-purple-700 rounded-lg" onClick={runFormula}>اجرا</button>
             </div>
-
             <div className="h-[360px] bg-slate-950 rounded-lg p-3">
               {labData.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-slate-400">نتیجه اینجا نمایش داده می‌شود.</div>
@@ -532,31 +531,51 @@ export default function App() {
           </section>
         )}
       </div>
+
+      {expandedChartOpen && (
+        <div className="fixed inset-0 bg-slate-950/90 z-50 p-6">
+          <div className="max-w-7xl mx-auto h-full bg-slate-900 border border-slate-700 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">نمای بزرگ نمودار {expandedChartSymbol}</h3>
+              <div className="flex items-center gap-2">
+                {CHART_RANGES.map((range) => (
+                  <button key={range.key} onClick={() => setExpandedChartRange(range.key)} className={`px-2 py-1 rounded text-xs ${expandedChartRange === range.key ? 'bg-cyan-700' : 'bg-slate-800'}`}>{range.label}</button>
+                ))}
+                <button className="px-3 py-1 rounded bg-rose-700" onClick={() => setExpandedChartOpen(false)}><Minimize2 size={14} /></button>
+              </div>
+            </div>
+            <div className="text-sm mb-2 text-cyan-300">
+              {expandedRangeData.length ? `آخرین مقدار: ${formatPreciseNumber(expandedRangeData[expandedRangeData.length - 1].value)}` : 'بدون داده'}
+            </div>
+            <div className="h-[84%]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={expandedRangeData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis dataKey="date" stroke="#94a3b8" />
+                  <YAxis stroke="#94a3b8" tickFormatter={formatCompactNumber} />
+                  <Tooltip formatter={(value) => formatPreciseNumber(value)} />
+                  <Legend />
+                  {expandedAverage !== null && <ReferenceLine y={expandedAverage} label="میانگین" stroke="#f59e0b" strokeDasharray="4 4" />}
+                  <Area dataKey="value" stroke="#22d3ee" fill="#22d3ee33" />
+                  <Line type="monotone" dataKey="value" stroke="#06b6d4" dot={false} strokeWidth={2} />
+                  <Brush dataKey="date" height={24} stroke="#06b6d4" travellerWidth={10} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function LoginView({
-  users,
-  loginUserId,
-  setLoginUserId,
-  login,
-  newUsername,
-  setNewUsername,
-  newDisplayName,
-  setNewDisplayName,
-  addUser,
-  backendConnected,
-  message
-}) {
+function LoginView({ users, loginUserId, setLoginUserId, login, newUsername, setNewUsername, newDisplayName, setNewDisplayName, addUser, backendConnected, message }) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6 flex items-center" dir="rtl">
       <div className="max-w-5xl w-full mx-auto grid lg:grid-cols-2 gap-5">
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
           <h2 className="text-xl font-bold flex items-center gap-2"><Users size={18} /> ورود به داشبورد شخصی</h2>
-          <p className={`text-xs ${backendConnected === false ? 'text-rose-400' : 'text-emerald-400'}`}>
-            {backendConnected === false ? 'ارتباط با API قطع است' : 'بک‌اند در دسترس است'}
-          </p>
+          <p className={`text-xs ${backendConnected === false ? 'text-rose-400' : 'text-emerald-400'}`}>{backendConnected === false ? 'ارتباط با API قطع است' : 'بک‌اند در دسترس است'}</p>
           <select value={loginUserId} onChange={(e) => setLoginUserId(e.target.value)} className="w-full bg-slate-950 rounded px-3 py-2">
             <option value="">انتخاب کاربر</option>
             {users.map((u) => <option key={u.id} value={u.id}>{u.display_name} ({u.username})</option>)}
@@ -578,7 +597,7 @@ function LoginView({
 
 function StatCard({ title, value }) {
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+    <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-4">
       <div className="text-sm text-slate-400">{title}</div>
       <div className="text-2xl font-bold mt-2">{value ?? '-'}</div>
     </div>
