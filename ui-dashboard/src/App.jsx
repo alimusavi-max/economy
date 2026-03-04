@@ -78,6 +78,10 @@ export default function App() {
   const [dbnomicsProviders, setDbnomicsProviders] = useState([])
   const [search, setSearch] = useState('')
   const [withDataOnly, setWithDataOnly] = useState(false)
+  const [symbolsPage, setSymbolsPage] = useState(1)
+  const [symbolsPageSize, setSymbolsPageSize] = useState(50)
+  const [symbolsTotalPages, setSymbolsTotalPages] = useState(1)
+  const [symbolsTotal, setSymbolsTotal] = useState(0)
 
   const [symbolsPage, setSymbolsPage] = useState(1)
   const [symbolsPageSize, setSymbolsPageSize] = useState(100)
@@ -243,6 +247,7 @@ export default function App() {
       setMessage(`دریافت فوری ${symbol} انجام شد.`)
       await loadDashboard()
       if (selectedUserId) await loadUserDashboard(selectedUserId)
+      if (selectedSymbol === symbol) setChartData(await fetchSymbolChart(symbol))
     } catch (err) {
       setMessage(extractErrorMessage(err, 'رفرش فوری ناموفق بود.'))
     }
@@ -266,9 +271,7 @@ export default function App() {
   const addUser = async () => {
     try {
       const res = await axios.post(`${API_BASE}/users`, { username: newUsername, display_name: newDisplayName })
-      setNewUsername('')
-      setNewDisplayName('')
-      await loadUsers()
+      setNewUsername(''); setNewDisplayName(''); await loadUsers()
       const createdUserId = String(res.data?.id || '')
       if (createdUserId) setLoginUserId(createdUserId)
       setMessage('کاربر جدید ساخته شد.')
@@ -306,18 +309,12 @@ export default function App() {
 
   const runFormula = async () => {
     const variablesPayload = {}
-    for (const v of variables) {
-      if (!v.symbol) return setMessage('برای همه متغیرها نماد انتخاب کن.')
-      variablesPayload[v.id] = v.symbol
-    }
-
+    for (const v of variables) { if (!v.symbol) return setMessage('برای همه متغیرها نماد انتخاب کن.'); variablesPayload[v.id] = v.symbol }
     try {
       const res = await axios.post(`${API_BASE}/data/lab/formula`, { formula, variables: variablesPayload })
       setLabData(res.data || [])
       if (!res.data?.length) setMessage('داده مشترک برای این ترکیب پیدا نشد.')
-    } catch (err) {
-      setMessage(extractErrorMessage(err, 'فرمول معتبر نیست یا دیتای کافی وجود ندارد.'))
-    }
+    } catch (err) { setMessage(extractErrorMessage(err, 'فرمول معتبر نیست یا دیتای کافی وجود ندارد.')) }
   }
 
   const availableSources = useMemo(() => (summary?.sources || []).map((s) => s.source), [summary])
@@ -506,7 +503,8 @@ export default function App() {
                   </select>
                   {idx > 1 && <button onClick={() => setVariables((prev) => prev.filter((item) => item.id !== v.id))} className="text-xs text-red-400">حذف</button>}
                 </div>
-              ))}
+                <ResponsiveContainer width="100%" height="88%"><ComposedChart data={selectedRangeData}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="date" stroke="#94a3b8" minTickGap={30} /><YAxis stroke="#94a3b8" tickFormatter={formatCompactNumber} width={72} /><Tooltip formatter={(value) => formatPreciseNumber(value)} /><Legend />{chartAverage !== null && <ReferenceLine y={chartAverage} label="میانگین" stroke="#f59e0b" strokeDasharray="4 4" />}<Area name="حجم کلی" dataKey="value" stroke="#22d3ee" fill="#22d3ee33" /><Line name="روند دقیق" type="monotone" dataKey="value" stroke="#06b6d4" dot={false} strokeWidth={2} /><Brush dataKey="date" height={20} stroke="#06b6d4" travellerWidth={8} /></ComposedChart></ResponsiveContainer>
+              </>}
             </div>
             <button className="px-3 py-1 bg-slate-800 rounded" onClick={() => setVariables((prev) => [...prev, { id: String.fromCharCode(65 + prev.length), symbol: '' }])}>افزودن متغیر</button>
             <div className="flex gap-2">

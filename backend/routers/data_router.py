@@ -149,9 +149,15 @@ async def get_available_symbols(
     dbnomics_provider: Optional[str] = Query(default=None, description="فیلتر زیرمنبع DBNOMICS مثل CBI/SAMA/BOE"),
     with_data_only: bool = Query(default=False, description="فقط شاخص‌هایی که دیتای زمانی دارند"),
     search: Optional[str] = Query(default=None, description="جستجو روی name/symbol/source"),
+
     limit: int = Query(default=300, ge=1, le=10000),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=1000),
+
+    limit: int = Query(default=300, ge=1, le=2000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=300),
+
     paginated: bool = Query(default=False, description="در صورت true خروجی شامل items+pagination می‌شود"),
 ):
     base_query = (
@@ -268,6 +274,7 @@ async def get_available_symbols(
             total = None
             rows_query = ordered_fallback_query.limit(limit)
 
+
         rows = (await db.execute(rows_query)).all()
 
     rows_payload = [
@@ -289,14 +296,26 @@ async def get_available_symbols(
     if not paginated:
         return rows_payload
 
+
     total_pages = max((total + page_size - 1) // page_size, 1)
     return {
         "items": rows_payload,
+
+    total = len(rows_payload)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": rows_payload[start:end],
+
         "pagination": {
             "total": total,
             "page": page,
             "page_size": page_size,
+
             "total_pages": total_pages,
+
+            "total_pages": max((total + page_size - 1) // page_size, 1),
+
         },
     }
 
@@ -413,6 +432,7 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
         if indicator.source == "YAHOO":
             return await fetch_and_store_market_data(session=db, symbol=indicator.symbol)
 
+
         if indicator.source == "WORLDBANK":
             parts = indicator.symbol.split("_", 2)
             if len(parts) == 3:
@@ -430,6 +450,26 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
 
         if indicator.source == "OECD":
             return await fetch_and_store_oecd_data(db, indicator.symbol)
+
+
+        if indicator.source == "WORLDBANK":
+            parts = indicator.symbol.split("_", 2)
+            if len(parts) == 3:
+                _, country, wb_indicator = parts
+                return await fetch_world_bank_data(db, country, wb_indicator, indicator.name)
+
+        if indicator.source == "ECB":
+            return await fetch_and_store_ecb_data(db, indicator.symbol)
+
+        if indicator.source == "DBNOMICS":
+            return await fetch_and_store_dbnomics_data(db, indicator.symbol)
+
+        if indicator.source == "IMF":
+            return await fetch_and_store_imf_data(db, indicator.symbol)
+
+        if indicator.source == "OECD":
+            return await fetch_and_store_oecd_data(db, indicator.symbol)
+
 
         if indicator.source == "BIS":
             return await fetch_and_store_bis_data(db, indicator.symbol)
