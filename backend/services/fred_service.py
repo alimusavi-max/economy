@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from database.models import Indicator, EconomicData
+import httpx  # این خط اضافه نشده!
 
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 

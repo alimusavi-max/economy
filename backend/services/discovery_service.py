@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 from database.models import Indicator
 from dotenv import load_dotenv
+import pandas as pd  # این خط وجود نداره ولی در seed_market_symbols استفاده شده
+
+
 load_dotenv()
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 
