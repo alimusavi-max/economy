@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import {
+  Area,
+  AreaChart,
+  Brush,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts'
 import { Activity, FlaskConical, LogOut, RefreshCcw, Search, SlidersHorizontal, UserPlus, Users, WandSparkles } from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -14,6 +27,8 @@ const extractErrorMessage = (err, fallback) => {
 }
 
 const sourceSupportsManualRefresh = (source) => ['FRED', 'YAHOO', 'WORLDBANK', 'ECB', 'DBNOMICS'].includes(source)
+const formatCompactNumber = (value) => Intl.NumberFormat('fa-IR', { notation: 'compact', maximumFractionDigits: 2 }).format(value || 0)
+const formatPreciseNumber = (value) => Intl.NumberFormat('fa-IR', { maximumFractionDigits: 4 }).format(value || 0)
 
 export default function App() {
   const [summary, setSummary] = useState(null)
@@ -118,9 +133,13 @@ export default function App() {
       setDefaultDashboardSymbols(symbolsFromUser)
       if (!selectedSymbol && symbolsFromUser.length) setSelectedSymbol(symbolsFromUser[0])
 
-      const chartPromises = symbolsFromUser.slice(0, 6).map(async (sym) => {
-        const chartRes = await axios.get(`${API_BASE}/data/${sym}`)
-        return { symbol: sym, data: chartRes.data?.data || [] }
+      const chartPromises = symbolsFromUser.slice(0, 12).map(async (sym) => {
+        try {
+          const chartRes = await axios.get(`${API_BASE}/data/${sym}`)
+          return { symbol: sym, data: chartRes.data?.data || [] }
+        } catch {
+          return { symbol: sym, data: [] }
+        }
       })
       setDashboardCharts(await Promise.all(chartPromises))
     } catch {
@@ -143,6 +162,22 @@ export default function App() {
 
   useEffect(() => {
     if (selectedUserId) loadUserDashboard(selectedUserId)
+  }, [loadUserDashboard, selectedUserId])
+
+  const persistDashboardSymbols = useCallback(async (nextSymbols, successMessage) => {
+    if (!selectedUserId) {
+      setMessage('ابتدا وارد حساب کاربری خودت شو.')
+      return
+    }
+
+    try {
+      await axios.put(`${API_BASE}/users/${selectedUserId}/dashboard`, { symbols: nextSymbols })
+      setDefaultDashboardSymbols(nextSymbols)
+      await loadUserDashboard(selectedUserId)
+      if (successMessage) setMessage(successMessage)
+    } catch (err) {
+      setMessage(extractErrorMessage(err, 'ذخیره داشبورد ناموفق بود.'))
+    }
   }, [loadUserDashboard, selectedUserId])
 
   useEffect(() => {
@@ -217,15 +252,28 @@ export default function App() {
   }
 
   const saveDefaultDashboard = async () => {
-    if (!selectedUserId) return setMessage('ابتدا وارد حساب کاربری خودت شو.')
-    try {
-      await axios.put(`${API_BASE}/users/${selectedUserId}/dashboard`, { symbols: defaultDashboardSymbols })
-      setMessage('داشبورد پیش‌فرض کاربر ذخیره شد.')
-      await loadUserDashboard(selectedUserId)
-    } catch (err) {
-      setMessage(extractErrorMessage(err, 'ذخیره داشبورد ناموفق بود.'))
-    }
+    await persistDashboardSymbols(defaultDashboardSymbols, 'داشبورد پیش‌فرض کاربر ذخیره شد.')
   }
+
+  const addSymbolToDashboard = async (symbol) => {
+    if (defaultDashboardSymbols.includes(symbol)) return
+    if (defaultDashboardSymbols.length >= 12) return setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد انتخاب کنی.')
+
+    const nextSymbols = [...defaultDashboardSymbols, symbol]
+    await persistDashboardSymbols(nextSymbols, `${symbol} به داشبوردت اضافه شد.`)
+  }
+
+  const removeSymbolFromDashboard = async (symbol) => {
+    const nextSymbols = defaultDashboardSymbols.filter((item) => item !== symbol)
+    await persistDashboardSymbols(nextSymbols, `${symbol} از داشبورد حذف شد.`)
+  }
+
+  const chartAverage = useMemo(() => {
+    if (!chartData.length) return null
+    const valid = chartData.map((item) => Number(item.value)).filter((val) => Number.isFinite(val))
+    if (!valid.length) return null
+    return valid.reduce((sum, val) => sum + val, 0) / valid.length
+  }, [chartData])
 
   const runFormula = async () => {
     const variablesPayload = {}
@@ -310,14 +358,24 @@ export default function App() {
                 <div className="grid lg:grid-cols-2 gap-4">
                   {dashboardCharts.map((c) => (
                     <div key={c.symbol} className="h-[240px] bg-slate-950 rounded-lg p-2">
-                      <div className="text-xs text-slate-300 mb-1">{c.symbol}</div>
+                      <div className="text-xs text-slate-300 mb-1 flex items-center justify-between">
+                        <span>{c.symbol}</span>
+                        <span className="text-slate-400">{c.data.length ? formatCompactNumber(c.data.at(-1)?.value) : 'بدون داده'}</span>
+                      </div>
                       <ResponsiveContainer width="100%" height="90%">
                         <AreaChart data={c.data}>
+                          <defs>
+                            <linearGradient id={`mini-${c.symbol}`} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="10%" stopColor="#38bdf8" stopOpacity={0.4} />
+                              <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                           <XAxis dataKey="date" stroke="#94a3b8" hide />
-                          <YAxis stroke="#94a3b8" width={42} />
-                          <Tooltip />
-                          <Area dataKey="value" stroke="#22d3ee" fill="#22d3ee33" />
+                          <YAxis stroke="#94a3b8" width={42} tickFormatter={formatCompactNumber} />
+                          <Tooltip formatter={(value) => formatPreciseNumber(value)} />
+                          <Area dataKey="value" stroke="#38bdf8" fill={`url(#mini-${c.symbol})`} />
+                          <Line type="monotone" dataKey="value" stroke="#22d3ee" dot={false} strokeWidth={1.7} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
@@ -334,14 +392,18 @@ export default function App() {
                   <div className="h-full flex items-center justify-center text-slate-400">در حال دریافت نمودار...</div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData}>
+                    <ComposedChart data={chartData}>
                       <defs><linearGradient id="v" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22d3ee" stopOpacity={0.6} /><stop offset="95%" stopColor="#22d3ee" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis dataKey="date" stroke="#94a3b8" />
-                      <YAxis stroke="#94a3b8" />
-                      <Tooltip />
-                      <Area dataKey="value" stroke="#22d3ee" fill="url(#v)" />
-                    </AreaChart>
+                      <XAxis dataKey="date" stroke="#94a3b8" minTickGap={32} />
+                      <YAxis stroke="#94a3b8" tickFormatter={formatCompactNumber} width={72} />
+                      <Tooltip formatter={(value) => formatPreciseNumber(value)} />
+                      <Legend />
+                      {chartAverage !== null && <ReferenceLine y={chartAverage} label="میانگین" stroke="#f59e0b" strokeDasharray="4 4" />}
+                      <Area name="حجم کلی" dataKey="value" stroke="#22d3ee" fill="url(#v)" />
+                      <Line name="روند دقیق" type="monotone" dataKey="value" stroke="#06b6d4" dot={false} strokeWidth={2} />
+                      <Brush dataKey="date" height={20} stroke="#06b6d4" travellerWidth={8} />
+                    </ComposedChart>
                   </ResponsiveContainer>
                 )}
               </div>
@@ -401,14 +463,7 @@ export default function App() {
                       <td className="p-2 flex flex-wrap gap-2">
                         <button onClick={() => setSelectedSymbol(row.symbol)} className="px-2 py-1 bg-slate-800 rounded">نمایش</button>
                         <button disabled={!sourceSupportsManualRefresh(row.source)} onClick={() => refreshNow(row.symbol)} className="px-2 py-1 bg-emerald-700 disabled:bg-slate-700 rounded">دریافت فوری</button>
-                        <button onClick={() => setDefaultDashboardSymbols((prev) => {
-                          if (prev.includes(row.symbol)) return prev
-                          if (prev.length >= 12) {
-                            setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد انتخاب کنی.')
-                            return prev
-                          }
-                          return [...prev, row.symbol]
-                        })} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد من</button>
+                        <button onClick={() => addSymbolToDashboard(row.symbol)} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد من</button>
                       </td>
                     </tr>
                   ))}
@@ -431,7 +486,7 @@ export default function App() {
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
               <h3 className="font-semibold">داشبورد اختصاصی من</h3>
               <div className="text-xs text-slate-400">نمادهای پیش‌فرض (حداکثر ۱۲):</div>
-              <div className="flex gap-2 flex-wrap">{defaultDashboardSymbols.map((s) => <button key={s} onClick={() => setDefaultDashboardSymbols((prev) => prev.filter((x) => x !== s))} className="px-2 py-1 rounded bg-slate-800 text-xs">{s} ✕</button>)}</div>
+              <div className="flex gap-2 flex-wrap">{defaultDashboardSymbols.map((s) => <button key={s} onClick={() => removeSymbolFromDashboard(s)} className="px-2 py-1 rounded bg-slate-800 text-xs">{s} ✕</button>)}</div>
               <button className="px-3 py-2 bg-emerald-700 rounded" onClick={saveDefaultDashboard}>ذخیره داشبورد من</button>
             </div>
           </section>
