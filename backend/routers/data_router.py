@@ -9,10 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import get_db
 from database.models import EconomicData, Indicator
+from services.alphavantage_service import fetch_and_store_alphavantage
+from services.bis_service import fetch_and_store_bis_data
 from services.ecb_service import fetch_and_store_ecb_data
 from services.dbnomics_service import fetch_and_store_dbnomics_data
+from services.eurostat_service import fetch_and_store_eurostat_data
 from services.fred_service import fetch_and_store_fred_series
+from services.imf_service import fetch_and_store_imf_data
 from services.market_service import fetch_and_store_market_data
+from services.oecd_service import fetch_and_store_oecd_data
 from services.worldbank_service import fetch_world_bank_data
 
 router = APIRouter(prefix="/api/data", tags=["Data API"])
@@ -145,6 +150,9 @@ async def get_available_symbols(
     with_data_only: bool = Query(default=False, description="فقط شاخص‌هایی که دیتای زمانی دارند"),
     search: Optional[str] = Query(default=None, description="جستجو روی name/symbol/source"),
     limit: int = Query(default=300, ge=1, le=2000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=300),
+    paginated: bool = Query(default=False, description="در صورت true خروجی شامل items+pagination می‌شود"),
 ):
     query = (
         select(
@@ -254,7 +262,7 @@ async def get_available_symbols(
         rows = result.all()
         has_dbnomics_provider_column = False
 
-    return [
+    rows_payload = [
         {
             "id": row.id,
             "symbol": row.symbol,
@@ -269,6 +277,22 @@ async def get_available_symbols(
         }
         for row in rows
     ]
+
+    if not paginated:
+        return rows_payload
+
+    total = len(rows_payload)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "items": rows_payload[start:end],
+        "pagination": {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max((total + page_size - 1) // page_size, 1),
+        },
+    }
 
 
 @router.get("/dbnomics/providers")
@@ -359,33 +383,63 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
     if not indicator:
         raise HTTPException(status_code=404, detail="نماد یافت نشد")
 
-    if indicator.source == "FRED":
-        return await fetch_and_store_fred_series(
-            session=db,
-            series_id=indicator.symbol,
-            name=indicator.name,
-            frequency=indicator.frequency or "Monthly",
+    async def _refresh_once():
+        if indicator.source == "FRED":
+            return await fetch_and_store_fred_series(
+                session=db,
+                series_id=indicator.symbol,
+                name=indicator.name,
+                frequency=indicator.frequency or "Monthly",
+            )
+
+        if indicator.source == "YAHOO":
+            return await fetch_and_store_market_data(session=db, symbol=indicator.symbol)
+
+        if indicator.source == "WORLDBANK":
+            parts = indicator.symbol.split("_", 2)
+            if len(parts) == 3:
+                _, country, wb_indicator = parts
+                return await fetch_world_bank_data(db, country, wb_indicator, indicator.name)
+
+        if indicator.source == "ECB":
+            return await fetch_and_store_ecb_data(db, indicator.symbol)
+
+        if indicator.source == "DBNOMICS":
+            return await fetch_and_store_dbnomics_data(db, indicator.symbol)
+
+        if indicator.source == "IMF":
+            return await fetch_and_store_imf_data(db, indicator.symbol)
+
+        if indicator.source == "OECD":
+            return await fetch_and_store_oecd_data(db, indicator.symbol)
+
+        if indicator.source == "BIS":
+            return await fetch_and_store_bis_data(db, indicator.symbol)
+
+        if indicator.source == "EUROSTAT":
+            return await fetch_and_store_eurostat_data(db, indicator.symbol)
+
+        if indicator.source == "ALPHAVANTAGE":
+            return await fetch_and_store_alphavantage(db, indicator.symbol)
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"برای منبع {indicator.source} هنوز رفرش مستقیم پیاده‌سازی نشده است.",
         )
 
-    if indicator.source == "YAHOO":
-        return await fetch_and_store_market_data(session=db, symbol=indicator.symbol)
-
-    if indicator.source == "WORLDBANK":
-        parts = indicator.symbol.split("_", 2)
-        if len(parts) == 3:
-            _, country, wb_indicator = parts
-            return await fetch_world_bank_data(db, country, wb_indicator, indicator.name)
-
-    if indicator.source == "ECB":
-        return await fetch_and_store_ecb_data(db, indicator.symbol)
-
-
-    if indicator.source == "DBNOMICS":
-        return await fetch_and_store_dbnomics_data(db, indicator.symbol)
+    last_error = None
+    for _ in range(2):
+        try:
+            result = await _refresh_once()
+            return {"success": True, "symbol": indicator.symbol, "source": indicator.source, "result": result}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            last_error = exc
 
     raise HTTPException(
-        status_code=400,
-        detail=f"برای منبع {indicator.source} هنوز رفرش مستقیم پیاده‌سازی نشده است.",
+        status_code=502,
+        detail=f"رفرش مستقیم برای {indicator.symbol} ناموفق بود: {str(last_error) if last_error else 'unknown error'}",
     )
 
 
