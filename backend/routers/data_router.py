@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import get_db
@@ -194,8 +195,64 @@ async def get_available_symbols(
 
     query = query.order_by(Indicator.source.asc(), Indicator.name.asc()).limit(limit)
 
-    result = await db.execute(query)
-    rows = result.all()
+    try:
+        result = await db.execute(query)
+        rows = result.all()
+        has_dbnomics_provider_column = True
+    except ProgrammingError as exc:
+        # Backward compatibility for old databases where this column has not been migrated yet.
+        # In that case we re-run a reduced query and return null for dbnomics_provider.
+        if "dbnomics_provider" not in str(exc).lower():
+            raise
+
+        fallback_query = (
+            select(
+                Indicator.id,
+                Indicator.symbol,
+                Indicator.name,
+                Indicator.source,
+                Indicator.frequency,
+                Indicator.update_interval_days,
+                Indicator.last_updated,
+                func.count(EconomicData.id).label("data_points_count"),
+            )
+            .select_from(Indicator)
+            .outerjoin(EconomicData, EconomicData.indicator_id == Indicator.id)
+        )
+
+        if source:
+            fallback_query = fallback_query.where(Indicator.source == source.upper())
+
+        if dbnomics_provider:
+            # If DB lacks provider column we cannot provider-filter accurately.
+            # Keep DBNOMICS-only filter to reduce surprises instead of crashing.
+            fallback_query = fallback_query.where(Indicator.source == "DBNOMICS")
+
+        if search:
+            pattern = f"%{search.strip()}%"
+            fallback_query = fallback_query.where(
+                Indicator.symbol.ilike(pattern)
+                | Indicator.name.ilike(pattern)
+                | Indicator.source.ilike(pattern)
+            )
+
+        fallback_query = fallback_query.group_by(
+            Indicator.id,
+            Indicator.symbol,
+            Indicator.name,
+            Indicator.source,
+            Indicator.frequency,
+            Indicator.update_interval_days,
+            Indicator.last_updated,
+        )
+
+        if with_data_only:
+            fallback_query = fallback_query.having(func.count(EconomicData.id) > 0)
+
+        fallback_query = fallback_query.order_by(Indicator.source.asc(), Indicator.name.asc()).limit(limit)
+        result = await db.execute(fallback_query)
+        rows = result.all()
+        has_dbnomics_provider_column = False
 
     return [
         {
@@ -204,7 +261,7 @@ async def get_available_symbols(
             "name": row.name,
             "source": row.source,
             "frequency": row.frequency,
-            "dbnomics_provider": row.dbnomics_provider,
+            "dbnomics_provider": row.dbnomics_provider if has_dbnomics_provider_column else None,
             "update_interval_days": row.update_interval_days,
             "last_updated": row.last_updated,
             "data_points_count": int(row.data_points_count or 0),
@@ -212,6 +269,72 @@ async def get_available_symbols(
         }
         for row in rows
     ]
+
+
+@router.get("/dbnomics/providers")
+async def get_dbnomics_providers(
+    db: AsyncSession = Depends(get_db),
+    with_data_only: bool = Query(default=False, description="فقط زیرمنبع‌هایی که دیتای زمانی دارند"),
+):
+    try:
+        query = (
+            select(Indicator.dbnomics_provider, func.count(Indicator.id).label("indicators_count"))
+            .where(Indicator.source == "DBNOMICS")
+            .where(Indicator.dbnomics_provider.is_not(None))
+            .where(Indicator.dbnomics_provider != "")
+            .group_by(Indicator.dbnomics_provider)
+            .order_by(Indicator.dbnomics_provider.asc())
+        )
+
+        if with_data_only:
+            query = (
+                select(Indicator.dbnomics_provider, func.count(func.distinct(Indicator.id)).label("indicators_count"))
+                .select_from(Indicator)
+                .join(EconomicData, EconomicData.indicator_id == Indicator.id)
+                .where(Indicator.source == "DBNOMICS")
+                .where(Indicator.dbnomics_provider.is_not(None))
+                .where(Indicator.dbnomics_provider != "")
+                .group_by(Indicator.dbnomics_provider)
+                .order_by(Indicator.dbnomics_provider.asc())
+            )
+
+        rows = (await db.execute(query)).all()
+        return [
+            {
+                "provider": r.dbnomics_provider,
+                "indicators": int(r.indicators_count or 0),
+            }
+            for r in rows
+        ]
+    except ProgrammingError as exc:
+        if "dbnomics_provider" not in str(exc).lower():
+            raise
+
+        fallback_query = select(Indicator.symbol).where(Indicator.source == "DBNOMICS")
+        if with_data_only:
+            fallback_query = (
+                select(Indicator.symbol)
+                .select_from(Indicator)
+                .join(EconomicData, EconomicData.indicator_id == Indicator.id)
+                .where(Indicator.source == "DBNOMICS")
+            )
+
+        symbols = (await db.execute(fallback_query)).scalars().all()
+        counts: Dict[str, int] = {}
+
+        for symbol in symbols:
+            if not symbol or not symbol.startswith("DBN_"):
+                continue
+            parts = symbol.split("_", 2)
+            if len(parts) < 2 or not parts[1]:
+                continue
+            provider = parts[1].upper()
+            counts[provider] = counts.get(provider, 0) + 1
+
+        return [
+            {"provider": provider, "indicators": counts[provider]}
+            for provider in sorted(counts.keys())
+        ]
 
 
 @router.put("/symbols/{symbol}/interval")
