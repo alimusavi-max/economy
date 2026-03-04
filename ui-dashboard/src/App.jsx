@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { Activity, FlaskConical, RefreshCcw, Search, SlidersHorizontal, UserPlus, Users, WandSparkles } from 'lucide-react'
+import { Activity, FlaskConical, LogOut, RefreshCcw, Search, SlidersHorizontal, UserPlus, Users, WandSparkles } from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+
+const ACTIVE_USER_STORAGE_KEY = 'economy_active_user_id'
 
 const extractErrorMessage = (err, fallback) => {
   if (err?.response?.data?.detail) return err.response.data.detail
@@ -23,11 +25,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [sourceFilter, setSourceFilter] = useState('')
   const [dbnomicsProviderFilter, setDbnomicsProviderFilter] = useState('')
+  const [dbnomicsProviders, setDbnomicsProviders] = useState([])
   const [search, setSearch] = useState('')
   const [withDataOnly, setWithDataOnly] = useState(false)
 
   const [users, setUsers] = useState([])
   const [selectedUserId, setSelectedUserId] = useState('')
+  const [loginUserId, setLoginUserId] = useState('')
   const [newUsername, setNewUsername] = useState('')
   const [newDisplayName, setNewDisplayName] = useState('')
   const [defaultDashboardSymbols, setDefaultDashboardSymbols] = useState([])
@@ -42,18 +46,51 @@ export default function App() {
   const [labData, setLabData] = useState([])
   const [backendConnected, setBackendConnected] = useState(null)
 
+
+  const activeUser = useMemo(() => users.find((u) => String(u.id) === String(selectedUserId)) || null, [users, selectedUserId])
+  const isLoggedIn = !!activeUser
+
+  const loadUsers = useCallback(async () => {
+    const res = await axios.get(`${API_BASE}/users`)
+    const allUsers = res.data || []
+    setUsers(allUsers)
+
+    const storedUserId = localStorage.getItem(ACTIVE_USER_STORAGE_KEY)
+    if (storedUserId && allUsers.some((u) => String(u.id) === storedUserId)) {
+      setSelectedUserId(storedUserId)
+      setLoginUserId(storedUserId)
+      return
+    }
+
+    if (!storedUserId && !loginUserId && allUsers.length) {
+      setLoginUserId(String(allUsers[0].id))
+    }
+  }, [loginUserId])
+
+  const loadDbnomicsProviders = useCallback(async () => {
+    try {
+      const params = withDataOnly ? { with_data_only: true } : {}
+      const res = await axios.get(`${API_BASE}/data/dbnomics/providers`, { params })
+      setDbnomicsProviders(res.data || [])
+    } catch {
+      setDbnomicsProviders([])
+    }
+  }, [withDataOnly])
+
+
   const loadUsers = useCallback(async () => {
     const res = await axios.get(`${API_BASE}/users`)
     setUsers(res.data || [])
     if (!selectedUserId && res.data?.length) setSelectedUserId(String(res.data[0].id))
   }, [selectedUserId])
 
+
   const loadDashboard = useCallback(async () => {
     setLoading(true)
     try {
       const params = { limit: 1000 }
       if (sourceFilter) params.source = sourceFilter
-      if (dbnomicsProviderFilter) params.dbnomics_provider = dbnomicsProviderFilter
+      if (dbnomicsProviderFilter && sourceFilter === 'DBNOMICS') params.dbnomics_provider = dbnomicsProviderFilter
       if (search.trim()) params.search = search.trim()
       if (withDataOnly) params.with_data_only = true
 
@@ -73,7 +110,11 @@ export default function App() {
       setSummary(null)
       setFreshness(null)
       setSymbols([])
+
+      setMessage(extractErrorMessage(err, 'خطا در بارگذاری داشبورد.'))
+
       setMessage(extractErrorMessage(err, 'خطا در بارگذاری داشبورد. ارتباط فرانت با بک‌اند برقرار نیست یا API در دسترس نیست.'))
+
     } finally {
       setLoading(false)
     }
@@ -102,8 +143,24 @@ export default function App() {
     Promise.all([loadUsers(), loadDashboard()]).catch(() => null)
   }, [loadDashboard, loadUsers])
 
+
+  useEffect(() => {
+    if (sourceFilter === 'DBNOMICS') {
+      loadDbnomicsProviders().catch(() => null)
+    } else {
+      setDbnomicsProviderFilter('')
+    }
+  }, [loadDbnomicsProviders, sourceFilter])
+
+  useEffect(() => {
+    if (selectedUserId) {
+      loadUserDashboard(selectedUserId)
+    }
+
+
   useEffect(() => {
     if (selectedUserId) loadUserDashboard(selectedUserId)
+
   }, [loadUserDashboard, selectedUserId])
 
   useEffect(() => {
@@ -117,7 +174,6 @@ export default function App() {
   }, [selectedSymbol])
 
   const availableSources = useMemo(() => (summary?.sources || []).map((s) => s.source), [summary])
-  const dbnomicsProviders = useMemo(() => [...new Set(symbols.filter((s) => s.source === 'DBNOMICS' && s.dbnomics_provider).map((s) => s.dbnomics_provider))], [symbols])
 
   const runPipeline = async (path, successMessage) => {
     try {
@@ -141,24 +197,45 @@ export default function App() {
       await loadDashboard()
       if (selectedUserId) await loadUserDashboard(selectedUserId)
     } catch (err) {
-      setMessage(err?.response?.data?.detail || 'رفرش فوری برای این منبع پشتیبانی نمی‌شود.')
+      setMessage(extractErrorMessage(err, 'رفرش فوری برای این منبع پشتیبانی نمی‌شود.'))
     }
   }
 
   const addUser = async () => {
     try {
-      await axios.post(`${API_BASE}/users`, { username: newUsername, display_name: newDisplayName })
+      const res = await axios.post(`${API_BASE}/users`, { username: newUsername, display_name: newDisplayName })
       setNewUsername('')
       setNewDisplayName('')
       await loadUsers()
+      const createdUserId = String(res.data?.id || '')
+      if (createdUserId) {
+        setLoginUserId(createdUserId)
+      }
       setMessage('کاربر جدید ساخته شد.')
     } catch (err) {
       setMessage(extractErrorMessage(err, 'ساخت کاربر ناموفق بود.'))
     }
   }
 
+  const login = async () => {
+    if (!loginUserId) return setMessage('یک کاربر انتخاب کن.')
+    setSelectedUserId(loginUserId)
+    localStorage.setItem(ACTIVE_USER_STORAGE_KEY, String(loginUserId))
+    setActiveTab('dashboard')
+    await loadUserDashboard(loginUserId)
+    setMessage('ورود با موفقیت انجام شد.')
+  }
+
+  const logout = () => {
+    setSelectedUserId('')
+    setDefaultDashboardSymbols([])
+    setDashboardCharts([])
+    localStorage.removeItem(ACTIVE_USER_STORAGE_KEY)
+    setMessage('خروج انجام شد.')
+  }
+
   const saveDefaultDashboard = async () => {
-    if (!selectedUserId) return setMessage('ابتدا یک کاربر انتخاب کن.')
+    if (!selectedUserId) return setMessage('ابتدا وارد حساب کاربری خودت شو.')
     try {
       await axios.put(`${API_BASE}/users/${selectedUserId}/dashboard`, { symbols: defaultDashboardSymbols })
       setMessage('داشبورد پیش‌فرض کاربر ذخیره شد.')
@@ -184,13 +261,35 @@ export default function App() {
     }
   }
 
+  if (!isLoggedIn) {
+    return (
+      <LoginView
+        users={users}
+        loginUserId={loginUserId}
+        setLoginUserId={setLoginUserId}
+        login={login}
+        newUsername={newUsername}
+        setNewUsername={setNewUsername}
+        newDisplayName={newDisplayName}
+        setNewDisplayName={setNewDisplayName}
+        addUser={addUser}
+        backendConnected={backendConnected}
+        message={message}
+      />
+    )
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6" dir="rtl">
       <div className="max-w-7xl mx-auto space-y-6">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2"><Activity className="text-cyan-400" /> پنل اقتصاد جهانی</h1>
+
+            <p className="text-slate-400 text-sm">کاربر: <span className="text-cyan-300">{activeUser?.display_name}</span> ({activeUser?.username})</p>
+
             <p className="text-slate-400 text-sm">چندکاربره + داشبورد شخصی + فیلتر DBNOMICS + آزمایشگاه</p>
+
             <p className={`text-xs mt-1 ${backendConnected === false ? 'text-rose-400' : 'text-emerald-400'}`}>
               {backendConnected === false ? 'ارتباط با بک‌اند قطع است' : backendConnected === true ? `اتصال API برقرار است (${API_BASE})` : 'وضعیت اتصال در حال بررسی...'}
             </p>
@@ -198,8 +297,8 @@ export default function App() {
           <div className="flex gap-2 flex-wrap">
             <button className="px-4 py-2 bg-slate-800 rounded-lg" onClick={loadDashboard}><RefreshCcw size={16} className="inline ml-1" /> رفرش</button>
             <button className="px-4 py-2 bg-cyan-700 rounded-lg" onClick={() => runPipeline('/pipeline/trigger-all', 'دریافت موازی داده‌ها شروع شد.')}>دریافت سریع</button>
-            <button className="px-4 py-2 bg-amber-700 rounded-lg" onClick={() => runPipeline('/pipeline/massive-worldbank', 'ماشین شخم‌زن بانک جهانی روشن شد.')}>خزش گسترده WB</button>
             <button className="px-4 py-2 bg-fuchsia-700 rounded-lg" onClick={() => runPipeline('/discover/dbnomics', 'کاوش بانک‌های مرکزی DBNOMICS آغاز شد.')}>کاوش بانک‌های مرکزی</button>
+            <button className="px-4 py-2 bg-rose-700 rounded-lg" onClick={logout}><LogOut size={16} className="inline ml-1" /> خروج</button>
           </div>
         </header>
 
@@ -207,9 +306,9 @@ export default function App() {
 
         <div className="flex gap-2">
           {[
-            ['dashboard', 'داشبورد'],
+            ['dashboard', 'داشبورد من'],
             ['manage', 'مدیریت شاخص‌ها'],
-            ['users', 'کاربران'],
+            ['users', 'تنظیمات حساب'],
             ['lab', 'آزمایشگاه']
           ].map(([key, label]) => (
             <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-lg ${activeTab === key ? 'bg-cyan-700' : 'bg-slate-800'}`}>{label}</button>
@@ -227,8 +326,8 @@ export default function App() {
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <h3 className="font-semibold mb-3 flex items-center gap-2"><Users size={16} /> داشبورد پیش‌فرض کاربر</h3>
-              {dashboardCharts.length === 0 ? <div className="text-slate-400 text-sm">برای کاربر انتخاب‌شده هنوز نمودار پیش‌فرض تنظیم نشده.</div> : (
+              <h3 className="font-semibold mb-3 flex items-center gap-2"><Users size={16} /> داشبورد پیش‌فرض من</h3>
+              {dashboardCharts.length === 0 ? <div className="text-slate-400 text-sm">برای حساب شما هنوز نمودار پیش‌فرض تنظیم نشده.</div> : (
                 <div className="grid lg:grid-cols-2 gap-4">
                   {dashboardCharts.map((c) => (
                     <div key={c.symbol} className="h-[240px] bg-slate-950 rounded-lg p-2">
@@ -269,13 +368,11 @@ export default function App() {
               </div>
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
                 <h3 className="font-semibold flex items-center gap-2"><WandSparkles size={16} /> سلامت فید جهانی</h3>
-                <p className="text-sm text-slate-400">اینجا می‌بینی چند شاخص عقب افتاده، چندتا نزدیک به موعد آپدیت و چندتا هنوز هیچ‌وقت دریافت نشده‌اند.</p>
                 <ul className="text-sm text-slate-300 space-y-1">
                   <li>سالم: {freshness?.totals?.healthy ?? '-'}</li>
                   <li>نزدیک سررسید: {freshness?.totals?.due_soon ?? '-'}</li>
                   <li>دیرهنگام: {freshness?.totals?.stale ?? '-'}</li>
                   <li>بدون آپدیت: {freshness?.totals?.never_updated ?? '-'}</li>
-                  <li>تولید گزارش: {freshness?.generated_at || '-'}</li>
                 </ul>
               </div>
             </div>
@@ -290,15 +387,24 @@ export default function App() {
                 <option value="">همه منابع</option>
                 {availableSources.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              <select value={dbnomicsProviderFilter} onChange={(e) => setDbnomicsProviderFilter(e.target.value)} className="bg-slate-950 rounded-lg px-3 py-2">
+              <select
+                value={dbnomicsProviderFilter}
+                onChange={(e) => setDbnomicsProviderFilter(e.target.value)}
+                disabled={sourceFilter !== 'DBNOMICS'}
+                className="bg-slate-950 rounded-lg px-3 py-2 disabled:opacity-50"
+              >
                 <option value="">زیرمنبع DBNOMICS</option>
-                {dbnomicsProviders.map((s) => <option key={s} value={s}>{s}</option>)}
+                {dbnomicsProviders.map((item) => <option key={item.provider} value={item.provider}>{item.provider} ({item.indicators})</option>)}
               </select>
               <label className="bg-slate-950 rounded-lg px-3 py-2 flex items-center gap-2"><SlidersHorizontal size={16} />
                 <input type="checkbox" checked={withDataOnly} onChange={(e) => setWithDataOnly(e.target.checked)} /> فقط دارای دیتا
               </label>
               <button className="bg-cyan-700 rounded-lg px-3 py-2" onClick={loadDashboard}>اعمال فیلتر</button>
             </div>
+
+            {sourceFilter === 'DBNOMICS' && (
+              <div className="text-xs text-slate-400">زیرمنبع‌ها به‌صورت پویا از بک‌اند خوانده می‌شوند. اگر تازه کاوش کردی، یک بار «رفرش» بزن.</div>
+            )}
 
             <div className="overflow-auto max-h-[520px]">
               <table className="w-full text-sm">
@@ -319,6 +425,12 @@ export default function App() {
                         <button onClick={() => setDefaultDashboardSymbols((prev) => {
                           if (prev.includes(row.symbol)) return prev
                           if (prev.length >= 12) {
+
+                            setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد انتخاب کنی.')
+                            return prev
+                          }
+                          return [...prev, row.symbol]
+                        })} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد من</button>
                             setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد کاربر انتخاب کنی.')
                             return prev
                           }
@@ -330,7 +442,10 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+            {!loading && symbols.length === 0 && <div className="text-sm text-amber-300">هیچ نمادی پیدا نشد. فیلترها را کم کن.</div>}
+
             {!loading && symbols.length === 0 && <div className="text-sm text-amber-300">هیچ نمادی پیدا نشد. فیلترها را کم کن یا گزینه «فقط دارای دیتا» را خاموش کن.</div>}
+
             {loading && <div className="text-sm text-slate-400">در حال دریافت لیست...</div>}
           </section>
         )}
@@ -344,14 +459,10 @@ export default function App() {
               <button className="px-3 py-2 bg-cyan-700 rounded" onClick={addUser}>ساخت کاربر</button>
             </div>
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-              <h3 className="font-semibold">داشبورد اختصاصی کاربر</h3>
-              <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} className="w-full bg-slate-950 rounded px-3 py-2">
-                <option value="">انتخاب کاربر</option>
-                {users.map((u) => <option key={u.id} value={u.id}>{u.display_name} ({u.username})</option>)}
-              </select>
+              <h3 className="font-semibold">داشبورد اختصاصی من</h3>
               <div className="text-xs text-slate-400">نمادهای پیش‌فرض (حداکثر ۱۲):</div>
               <div className="flex gap-2 flex-wrap">{defaultDashboardSymbols.map((s) => <button key={s} onClick={() => setDefaultDashboardSymbols((prev) => prev.filter((x) => x !== s))} className="px-2 py-1 rounded bg-slate-800 text-xs">{s} ✕</button>)}</div>
-              <button className="px-3 py-2 bg-emerald-700 rounded" onClick={saveDefaultDashboard}>ذخیره داشبورد این کاربر</button>
+              <button className="px-3 py-2 bg-emerald-700 rounded" onClick={saveDefaultDashboard}>ذخیره داشبورد من</button>
             </div>
           </section>
         )}
@@ -395,6 +506,46 @@ export default function App() {
             </div>
           </section>
         )}
+      </div>
+    </div>
+  )
+}
+
+function LoginView({
+  users,
+  loginUserId,
+  setLoginUserId,
+  login,
+  newUsername,
+  setNewUsername,
+  newDisplayName,
+  setNewDisplayName,
+  addUser,
+  backendConnected,
+  message
+}) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 flex items-center" dir="rtl">
+      <div className="max-w-5xl w-full mx-auto grid lg:grid-cols-2 gap-5">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+          <h2 className="text-xl font-bold flex items-center gap-2"><Users size={18} /> ورود به داشبورد شخصی</h2>
+          <p className={`text-xs ${backendConnected === false ? 'text-rose-400' : 'text-emerald-400'}`}>
+            {backendConnected === false ? 'ارتباط با API قطع است' : 'بک‌اند در دسترس است'}
+          </p>
+          <select value={loginUserId} onChange={(e) => setLoginUserId(e.target.value)} className="w-full bg-slate-950 rounded px-3 py-2">
+            <option value="">انتخاب کاربر</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.display_name} ({u.username})</option>)}
+          </select>
+          <button onClick={login} className="w-full bg-cyan-700 rounded px-3 py-2">ورود</button>
+          {message && <div className="text-sm text-slate-300">{message}</div>}
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-3">
+          <h3 className="font-semibold flex items-center gap-2"><UserPlus size={16} /> ساخت حساب جدید</h3>
+          <input value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="username" className="w-full bg-slate-950 rounded px-3 py-2" />
+          <input value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} placeholder="نام نمایشی" className="w-full bg-slate-950 rounded px-3 py-2" />
+          <button className="w-full bg-emerald-700 rounded px-3 py-2" onClick={addUser}>ایجاد کاربر</button>
+        </div>
       </div>
     </div>
   )

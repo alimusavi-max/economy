@@ -271,6 +271,72 @@ async def get_available_symbols(
     ]
 
 
+@router.get("/dbnomics/providers")
+async def get_dbnomics_providers(
+    db: AsyncSession = Depends(get_db),
+    with_data_only: bool = Query(default=False, description="فقط زیرمنبع‌هایی که دیتای زمانی دارند"),
+):
+    try:
+        query = (
+            select(Indicator.dbnomics_provider, func.count(Indicator.id).label("indicators_count"))
+            .where(Indicator.source == "DBNOMICS")
+            .where(Indicator.dbnomics_provider.is_not(None))
+            .where(Indicator.dbnomics_provider != "")
+            .group_by(Indicator.dbnomics_provider)
+            .order_by(Indicator.dbnomics_provider.asc())
+        )
+
+        if with_data_only:
+            query = (
+                select(Indicator.dbnomics_provider, func.count(func.distinct(Indicator.id)).label("indicators_count"))
+                .select_from(Indicator)
+                .join(EconomicData, EconomicData.indicator_id == Indicator.id)
+                .where(Indicator.source == "DBNOMICS")
+                .where(Indicator.dbnomics_provider.is_not(None))
+                .where(Indicator.dbnomics_provider != "")
+                .group_by(Indicator.dbnomics_provider)
+                .order_by(Indicator.dbnomics_provider.asc())
+            )
+
+        rows = (await db.execute(query)).all()
+        return [
+            {
+                "provider": r.dbnomics_provider,
+                "indicators": int(r.indicators_count or 0),
+            }
+            for r in rows
+        ]
+    except ProgrammingError as exc:
+        if "dbnomics_provider" not in str(exc).lower():
+            raise
+
+        fallback_query = select(Indicator.symbol).where(Indicator.source == "DBNOMICS")
+        if with_data_only:
+            fallback_query = (
+                select(Indicator.symbol)
+                .select_from(Indicator)
+                .join(EconomicData, EconomicData.indicator_id == Indicator.id)
+                .where(Indicator.source == "DBNOMICS")
+            )
+
+        symbols = (await db.execute(fallback_query)).scalars().all()
+        counts: Dict[str, int] = {}
+
+        for symbol in symbols:
+            if not symbol or not symbol.startswith("DBN_"):
+                continue
+            parts = symbol.split("_", 2)
+            if len(parts) < 2 or not parts[1]:
+                continue
+            provider = parts[1].upper()
+            counts[provider] = counts.get(provider, 0) + 1
+
+        return [
+            {"provider": provider, "indicators": counts[provider]}
+            for provider in sorted(counts.keys())
+        ]
+
+
 @router.put("/symbols/{symbol}/interval")
 async def update_symbol_interval(symbol: str, request: UpdateIntervalRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
