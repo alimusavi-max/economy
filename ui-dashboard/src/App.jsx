@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Activity, FlaskConical, RefreshCcw, Search, SlidersHorizontal, UserPlus, Users, WandSparkles } from 'lucide-react'
 
-const API_BASE = 'http://localhost:8000/api'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+
+const extractErrorMessage = (err, fallback) => {
+  if (err?.response?.data?.detail) return err.response.data.detail
+  if (err?.message) return err.message
+  return fallback
+}
 
 const sourceSupportsManualRefresh = (source) => ['FRED', 'YAHOO', 'WORLDBANK', 'ECB', 'DBNOMICS'].includes(source)
 
@@ -18,7 +24,7 @@ export default function App() {
   const [sourceFilter, setSourceFilter] = useState('')
   const [dbnomicsProviderFilter, setDbnomicsProviderFilter] = useState('')
   const [search, setSearch] = useState('')
-  const [withDataOnly, setWithDataOnly] = useState(true)
+  const [withDataOnly, setWithDataOnly] = useState(false)
 
   const [users, setUsers] = useState([])
   const [selectedUserId, setSelectedUserId] = useState('')
@@ -34,14 +40,15 @@ export default function App() {
   const [variables, setVariables] = useState([{ id: 'A', symbol: '' }, { id: 'B', symbol: '' }])
   const [formula, setFormula] = useState('(A / B) * 100')
   const [labData, setLabData] = useState([])
+  const [backendConnected, setBackendConnected] = useState(null)
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     const res = await axios.get(`${API_BASE}/users`)
     setUsers(res.data || [])
     if (!selectedUserId && res.data?.length) setSelectedUserId(String(res.data[0].id))
-  }
+  }, [selectedUserId])
 
-  const loadDashboard = async () => {
+  const loadDashboard = useCallback(async () => {
     setLoading(true)
     try {
       const params = { limit: 1000 }
@@ -59,15 +66,20 @@ export default function App() {
       setSummary(summaryRes.data)
       setFreshness(freshnessRes.data)
       setSymbols(symbolsRes.data)
+      setBackendConnected(true)
       setMessage('')
     } catch (err) {
-      setMessage('خطا در بارگذاری داشبورد. بک‌اند را بررسی کن.')
+      setBackendConnected(false)
+      setSummary(null)
+      setFreshness(null)
+      setSymbols([])
+      setMessage(extractErrorMessage(err, 'خطا در بارگذاری داشبورد. ارتباط فرانت با بک‌اند برقرار نیست یا API در دسترس نیست.'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [dbnomicsProviderFilter, search, sourceFilter, withDataOnly])
 
-  const loadUserDashboard = async (userId) => {
+  const loadUserDashboard = useCallback(async (userId) => {
     if (!userId) return
     try {
       const res = await axios.get(`${API_BASE}/users/${userId}/dashboard`)
@@ -84,15 +96,15 @@ export default function App() {
       setDefaultDashboardSymbols([])
       setDashboardCharts([])
     }
-  }
+  }, [selectedSymbol])
 
   useEffect(() => {
     Promise.all([loadUsers(), loadDashboard()]).catch(() => null)
-  }, [])
+  }, [loadDashboard, loadUsers])
 
   useEffect(() => {
     if (selectedUserId) loadUserDashboard(selectedUserId)
-  }, [selectedUserId])
+  }, [loadUserDashboard, selectedUserId])
 
   useEffect(() => {
     if (!selectedSymbol) return
@@ -111,8 +123,8 @@ export default function App() {
     try {
       await axios.post(`${API_BASE}${path}`)
       setMessage(successMessage)
-    } catch {
-      setMessage('ارسال دستور انجام نشد.')
+    } catch (err) {
+      setMessage(extractErrorMessage(err, 'ارسال دستور انجام نشد.'))
     }
   }
 
@@ -141,7 +153,7 @@ export default function App() {
       await loadUsers()
       setMessage('کاربر جدید ساخته شد.')
     } catch (err) {
-      setMessage(err?.response?.data?.detail || 'ساخت کاربر ناموفق بود.')
+      setMessage(extractErrorMessage(err, 'ساخت کاربر ناموفق بود.'))
     }
   }
 
@@ -152,7 +164,7 @@ export default function App() {
       setMessage('داشبورد پیش‌فرض کاربر ذخیره شد.')
       await loadUserDashboard(selectedUserId)
     } catch (err) {
-      setMessage(err?.response?.data?.detail || 'ذخیره داشبورد ناموفق بود.')
+      setMessage(extractErrorMessage(err, 'ذخیره داشبورد ناموفق بود.'))
     }
   }
 
@@ -167,8 +179,8 @@ export default function App() {
       const res = await axios.post(`${API_BASE}/data/lab/formula`, { formula, variables: variablesPayload })
       setLabData(res.data || [])
       if (!res.data?.length) setMessage('داده مشترک برای این ترکیب پیدا نشد.')
-    } catch {
-      setMessage('فرمول معتبر نیست یا دیتای کافی وجود ندارد.')
+    } catch (err) {
+      setMessage(extractErrorMessage(err, 'فرمول معتبر نیست یا دیتای کافی وجود ندارد.'))
     }
   }
 
@@ -179,6 +191,9 @@ export default function App() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2"><Activity className="text-cyan-400" /> پنل اقتصاد جهانی</h1>
             <p className="text-slate-400 text-sm">چندکاربره + داشبورد شخصی + فیلتر DBNOMICS + آزمایشگاه</p>
+            <p className={`text-xs mt-1 ${backendConnected === false ? 'text-rose-400' : 'text-emerald-400'}`}>
+              {backendConnected === false ? 'ارتباط با بک‌اند قطع است' : backendConnected === true ? `اتصال API برقرار است (${API_BASE})` : 'وضعیت اتصال در حال بررسی...'}
+            </p>
           </div>
           <div className="flex gap-2 flex-wrap">
             <button className="px-4 py-2 bg-slate-800 rounded-lg" onClick={loadDashboard}><RefreshCcw size={16} className="inline ml-1" /> رفرش</button>
@@ -301,13 +316,21 @@ export default function App() {
                       <td className="p-2 flex flex-wrap gap-2">
                         <button onClick={() => setSelectedSymbol(row.symbol)} className="px-2 py-1 bg-slate-800 rounded">نمایش</button>
                         <button disabled={!sourceSupportsManualRefresh(row.source)} onClick={() => refreshNow(row.symbol)} className="px-2 py-1 bg-emerald-700 disabled:bg-slate-700 rounded">دریافت فوری</button>
-                        <button onClick={() => setDefaultDashboardSymbols((prev) => prev.includes(row.symbol) ? prev : [...prev, row.symbol].slice(0, 12))} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد کاربر</button>
+                        <button onClick={() => setDefaultDashboardSymbols((prev) => {
+                          if (prev.includes(row.symbol)) return prev
+                          if (prev.length >= 12) {
+                            setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد کاربر انتخاب کنی.')
+                            return prev
+                          }
+                          return [...prev, row.symbol]
+                        })} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد کاربر</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {!loading && symbols.length === 0 && <div className="text-sm text-amber-300">هیچ نمادی پیدا نشد. فیلترها را کم کن یا گزینه «فقط دارای دیتا» را خاموش کن.</div>}
             {loading && <div className="text-sm text-slate-400">در حال دریافت لیست...</div>}
           </section>
         )}
