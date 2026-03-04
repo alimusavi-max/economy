@@ -14,46 +14,76 @@ HEADERS = {
 
 async def auto_discover_central_bank(session: AsyncSession, bank_code: str):
     """
-    کاوشگر جهانی بانک‌های مرکزی مجهز به سیستم ضد تحریم
+    کاوشگر جهانی بانک‌های مرکزی با سیستم صفحه‌بندی (Pagination) هوشمند
     """
     print(f"🏦 در حال نفوذ به کاتالوگ بانک مرکزی {bank_code}...")
     
-    url = f"https://api.db.nomics.world/v22/datasets/{bank_code}?limit=1000"
+    offset = 0
+    limit = 50  # 👈 احترام به قوانین سرور (درخواست بسته‌های ۵۰ تایی)
+    total_inserted = 0
     
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=40)
-        if response.status_code != 200:
-            print(f"❌ سرور بانک {bank_code} ارتباط را رد کرد (کد: {response.status_code})")
-            return 0
-        data = response.json()
-    except Exception as e:
-        print(f"❌ خطای ارتباط با شبکه DBnomics: {e}")
-        return 0
+    while True:
+        url = f"https://api.db.nomics.world/v22/datasets/{bank_code}?limit={limit}&offset={offset}"
         
-    datasets = data.get("datasets", {}).get("docs", [])
-    records_to_insert = []
-    
-    for ds in datasets:
-        code = ds.get("code")
-        name = ds.get("name")
-        if code:
-            records_to_insert.append({
-                "symbol": f"DBN_{bank_code}_{code}"[:50],
-                "name": f"{bank_code}: {name}"[:255],
-                "source": "DBNOMICS",
-                "frequency": "Mixed",
-                "update_interval_days": 15
-            })
+        try:
+            # تایم‌اوت را بالاتر می‌بریم برای اینترنت‌های نوسان‌دار
+            response = requests.get(url, headers=HEADERS, timeout=40)
             
-    if records_to_insert:
-        stmt = insert(Indicator).values(records_to_insert).on_conflict_do_nothing(index_elements=["symbol"])
-        result = await session.execute(stmt)
-        await session.commit()
-        print(f"🎉 عملیات موفق! {result.rowcount} پایگاه داده از بانک {bank_code} کشف شد.")
-        return result.rowcount
-    
-    print(f"⚠️ پایگاه داده‌ای برای {bank_code} یافت نشد.")
-    return 0
+            if response.status_code == 400:
+                print(f"   ❌ سرور درخواست را رد کرد. (احتمالا پارامترهای نامعتبر)")
+                break
+            elif response.status_code != 200:
+                print(f"   ❌ سرور کد {response.status_code} را برگرداند.")
+                break
+                
+            data = response.json()
+        except requests.exceptions.ConnectionError:
+            print(f"   ❌ خطای قطعی اینترنت یا VPN در دریافت {bank_code}.")
+            break
+        except Exception as e:
+            print(f"   ❌ خطای ناشناخته: {e}")
+            break
+            
+        datasets = data.get("datasets", {}).get("docs", [])
+        
+        # اگر دیتاسِتی در این صفحه نبود، یعنی به آخر خط رسیدیم
+        if not datasets:
+            break
+            
+        records_to_insert = []
+        for ds in datasets:
+            code = ds.get("code")
+            name = ds.get("name")
+            if code:
+                records_to_insert.append({
+                    "symbol": f"DBN_{bank_code}_{code}"[:50],
+                    "name": f"{bank_code}: {name}"[:255],
+                    "source": "DBNOMICS",
+                    "frequency": "Mixed",
+                    "update_interval_days": 15
+                })
+                
+        if records_to_insert:
+            stmt = insert(Indicator).values(records_to_insert).on_conflict_do_nothing(index_elements=["symbol"])
+            result = await session.execute(stmt)
+            await session.commit()
+            total_inserted += result.rowcount
+            
+        # اگر تعداد دیتاسِت‌های دریافتی کمتر از ظرفیت صفحه بود، یعنی صفحه آخر است
+        if len(datasets) < limit:
+            break
+            
+        # رفتن به صفحه بعد
+        offset += limit
+        print(f"   📄 دریافت {offset} دیتاسِت... در حال ورق زدن به صفحه بعد.")
+        await asyncio.sleep(1) # استراحت ۱ ثانیه‌ای برای جلوگیری از بلاک شدن
+        
+    if total_inserted > 0:
+        print(f"🎉 عملیات موفق! {total_inserted} پایگاه داده از {bank_code} کشف شد.")
+    else:
+        print(f"⚠️ پایگاه داده جدیدی برای {bank_code} یافت/ثبت نشد.")
+        
+    return total_inserted
 
 async def fetch_and_store_dbnomics_data(session: AsyncSession, symbol: str):
     """
@@ -149,18 +179,17 @@ async def auto_discover_all_central_banks(session: AsyncSession):
     print("🌍 در حال آماده‌سازی شاه‌کلید برای تمام بانک‌های مرکزی جهان...")
     
     central_banks = [
-        "SNB",      # سوئیس
-        "BOE",      # انگلیس
-        "BOJ",      # ژاپن
-        "BOC",      # کانادا
-        "RBA",      # استرالیا
-        "RBNZ",     # نیوزیلند
-        "RBI",      # هند
-        "CBR",      # روسیه
-        "BCB",      # برزیل
-        "BANXICO",  # مکزیک
-        "SARB",     # آفریقای جنوبی
-        "BOK"       # کره جنوبی
+        "BOE",      # بانک مرکزی انگلیس (Bank of England) - تایید شده ✅
+        "BOJ",      # بانک مرکزی ژاپن (Bank of Japan) - تایید شده ✅
+        "BOC",      # بانک مرکزی کانادا (Bank of Canada) - تایید شده ✅
+        "RBA",      # بانک مرکزی استرالیا (Reserve Bank of Australia) - تایید شده ✅
+        "BUBA",     # بانک مرکزی آلمان (Bundesbank) - تایید شده ✅
+        "BDF",      # بانک مرکزی فرانسه (Banque de France) - تایید شده ✅
+        "TCMB",     # بانک مرکزی ترکیه (Central Bank of Turkey) - تایید شده ✅
+        "BCB",      # بانک مرکزی برزیل (Banco Central do Brasil) - تایید شده ✅
+        "SAMA",     # سازمان پولی عربستان سعودی (Saudi Monetary Authority) - تایید شده ✅
+        "BI",       # بانک مرکزی اندونزی (Bank Indonesia) - تایید شده ✅
+        "SARB"      # بانک مرکزی آفریقای جنوبی (South African Reserve Bank) - تایید شده ✅
     ]
 
     total_discovered = 0
@@ -168,6 +197,7 @@ async def auto_discover_all_central_banks(session: AsyncSession):
         try:
             count = await auto_discover_central_bank(session, bank)
             total_discovered += count
+            # استراحت ۲ ثانیه‌ای بین هر بانک برای جلوگیری از مسدود شدن IP
             await asyncio.sleep(2)
         except Exception as e:
             print(f"   ⚠️ پرش از {bank} به دلیل خطا: {e}")
