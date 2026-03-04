@@ -25,6 +25,30 @@ from services.market_service import fetch_and_store_market_data
 from services.oecd_service import auto_discover_oecd_indicators
 from services.scheduler_service import start_scheduler
 from services.worldbank_service import auto_discover_worldbank_indicators
+from sqlalchemy import text
+
+
+async def ensure_backward_compatible_schema():
+    """Adds missing columns for old databases that were created before newer model fields."""
+    if engine is None:
+        return
+
+    async with engine.begin() as conn:
+        dialect = conn.dialect.name
+
+        if dialect == "postgresql":
+            await conn.execute(
+                text(
+                    "ALTER TABLE indicators "
+                    "ADD COLUMN IF NOT EXISTS dbnomics_provider VARCHAR(20)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_indicators_dbnomics_provider "
+                    "ON indicators (dbnomics_provider)"
+                )
+            )
 
 
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
@@ -57,6 +81,7 @@ async def lifespan(app: FastAPI):
         print("در حال اتصال به دیتابیس و بررسی جداول...")
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        await ensure_backward_compatible_schema()
     else:
         print("هشدار: اتصال دیتابیس برقرار نشد؛ سرور بدون قابلیت‌های دیتابیس اجرا می‌شود.")
 
@@ -182,4 +207,3 @@ async def trigger_dbnomics_discovery(bank_code: Optional[str] = None, db: AsyncS
 @app.post("/api/fetch/dbnomics/{symbol}")
 async def trigger_dbnomics_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
     return await fetch_and_store_dbnomics_data(session=db, symbol=symbol.upper())
-
