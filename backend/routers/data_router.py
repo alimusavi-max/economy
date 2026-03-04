@@ -164,9 +164,11 @@ async def get_available_symbols(
     if source:
         query = query.where(Indicator.source == source.upper())
 
+
     if dbnomics_provider:
         query = query.where(Indicator.source == "DBNOMICS")
         query = query.where(Indicator.dbnomics_provider == dbnomics_provider.upper())
+
 
     if search:
         pattern = f"%{search.strip()}%"
@@ -253,6 +255,7 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
 
     if indicator.source == "ECB":
         return await fetch_and_store_ecb_data(db, indicator.symbol)
+
 
     if indicator.source == "DBNOMICS":
         return await fetch_and_store_dbnomics_data(db, indicator.symbol)

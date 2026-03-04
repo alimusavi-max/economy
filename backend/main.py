@@ -8,10 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import engine, get_db
 from database.models import AssetMarketData, Base
+
 from routers import data_router, pipeline_router, user_router
 from services.alphavantage_service import fetch_and_store_alphavantage
 from services.bis_service import auto_discover_bis_indicators
 from services.dbnomics_service import auto_discover_all_central_banks, auto_discover_central_bank, fetch_and_store_dbnomics_data
+from routers import data_router, pipeline_router
+from services.alphavantage_service import fetch_and_store_alphavantage
+from services.bis_service import auto_discover_bis_indicators
 from services.discovery_service import auto_discover_all_fred, discover_fred_category, seed_market_symbols
 from services.ecb_service import auto_discover_ecb, fetch_and_store_ecb_data
 from services.eurostat_service import auto_discover_eurostat
@@ -164,6 +168,7 @@ async def get_eur_usd_history(db: AsyncSession = Depends(get_db)):
     return {"symbol": "EUR/USD", "data": records}
 
 
+
 @app.post("/api/discover/dbnomics")
 async def trigger_dbnomics_discovery(bank_code: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     if bank_code:
@@ -177,3 +182,4 @@ async def trigger_dbnomics_discovery(bank_code: Optional[str] = None, db: AsyncS
 @app.post("/api/fetch/dbnomics/{symbol}")
 async def trigger_dbnomics_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
     return await fetch_and_store_dbnomics_data(session=db, symbol=symbol.upper())
+
