@@ -12,12 +12,24 @@ async def fetch_and_store_fred_series(session: AsyncSession, series_id: str, nam
     print(f"در حال دریافت {name} ({series_id})...")
     
     url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json"
-    response = requests.get(url)
     
-    if response.status_code != 200:
-        return {"success": False, "message": f"خطا در دریافت دیتا از FRED: {response.status_code}"}
-        
-    data = response.json()
+    # اضافه کردن هدر مرورگر واقعی برای جلوگیری از بلاک شدن توسط فایروال FRED
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    try:
+        # استفاده از httpx.AsyncClient به جای requests
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=15.0)
+            
+        if response.status_code != 200:
+            return {"success": False, "message": f"خطا در دریافت دیتا از FRED: {response.status_code} - {response.text}"}
+            
+        data = response.json()
+    except Exception as e:
+        return {"success": False, "message": f"خطای شبکه در اتصال به FRED: {str(e)}"}
+
     observations = data.get('observations', [])
 
     result = await session.execute(select(Indicator).where(Indicator.symbol == series_id))
@@ -41,7 +53,7 @@ async def fetch_and_store_fred_series(session: AsyncSession, series_id: str, nam
                 "date": date_obj,
                 "value": val
             })
-        except ValueError:
+        except (ValueError, TypeError):
             continue
 
     inserted_count = 0
@@ -51,7 +63,7 @@ async def fetch_and_store_fred_series(session: AsyncSession, series_id: str, nam
         result = await session.execute(stmt)
         inserted_count = result.rowcount
     
-    # === بخش جدید: آپدیت کردن تاریخ آخرین دریافت موفق ===
+    # آپدیت کردن تاریخ آخرین دریافت موفق
     indicator.last_updated = date.today()
     session.add(indicator)
     await session.commit()

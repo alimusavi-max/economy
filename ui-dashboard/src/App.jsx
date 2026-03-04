@@ -64,8 +64,10 @@ export default function App() {
 
     if (!storedUserId && !loginUserId && allUsers.length) {
       setLoginUserId(String(allUsers[0].id))
+      // افزودن کاربر اول به عنوان انتخاب شده در صورت لاگین نبودن
+      if (!selectedUserId) setSelectedUserId(String(allUsers[0].id))
     }
-  }, [loginUserId])
+  }, [loginUserId, selectedUserId])
 
   const loadDbnomicsProviders = useCallback(async () => {
     try {
@@ -76,14 +78,6 @@ export default function App() {
       setDbnomicsProviders([])
     }
   }, [withDataOnly])
-
-
-  const loadUsers = useCallback(async () => {
-    const res = await axios.get(`${API_BASE}/users`)
-    setUsers(res.data || [])
-    if (!selectedUserId && res.data?.length) setSelectedUserId(String(res.data[0].id))
-  }, [selectedUserId])
-
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
@@ -110,11 +104,7 @@ export default function App() {
       setSummary(null)
       setFreshness(null)
       setSymbols([])
-
-      setMessage(extractErrorMessage(err, 'خطا در بارگذاری داشبورد.'))
-
       setMessage(extractErrorMessage(err, 'خطا در بارگذاری داشبورد. ارتباط فرانت با بک‌اند برقرار نیست یا API در دسترس نیست.'))
-
     } finally {
       setLoading(false)
     }
@@ -143,7 +133,6 @@ export default function App() {
     Promise.all([loadUsers(), loadDashboard()]).catch(() => null)
   }, [loadDashboard, loadUsers])
 
-
   useEffect(() => {
     if (sourceFilter === 'DBNOMICS') {
       loadDbnomicsProviders().catch(() => null)
@@ -153,14 +142,7 @@ export default function App() {
   }, [loadDbnomicsProviders, sourceFilter])
 
   useEffect(() => {
-    if (selectedUserId) {
-      loadUserDashboard(selectedUserId)
-    }
-
-
-  useEffect(() => {
     if (selectedUserId) loadUserDashboard(selectedUserId)
-
   }, [loadUserDashboard, selectedUserId])
 
   useEffect(() => {
@@ -285,11 +267,8 @@ export default function App() {
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2"><Activity className="text-cyan-400" /> پنل اقتصاد جهانی</h1>
-
             <p className="text-slate-400 text-sm">کاربر: <span className="text-cyan-300">{activeUser?.display_name}</span> ({activeUser?.username})</p>
-
             <p className="text-slate-400 text-sm">چندکاربره + داشبورد شخصی + فیلتر DBNOMICS + آزمایشگاه</p>
-
             <p className={`text-xs mt-1 ${backendConnected === false ? 'text-rose-400' : 'text-emerald-400'}`}>
               {backendConnected === false ? 'ارتباط با بک‌اند قطع است' : backendConnected === true ? `اتصال API برقرار است (${API_BASE})` : 'وضعیت اتصال در حال بررسی...'}
             </p>
@@ -425,27 +404,18 @@ export default function App() {
                         <button onClick={() => setDefaultDashboardSymbols((prev) => {
                           if (prev.includes(row.symbol)) return prev
                           if (prev.length >= 12) {
-
                             setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد انتخاب کنی.')
                             return prev
                           }
                           return [...prev, row.symbol]
                         })} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد من</button>
-                            setMessage('حداکثر ۱۲ نماد می‌توانی برای داشبورد کاربر انتخاب کنی.')
-                            return prev
-                          }
-                          return [...prev, row.symbol]
-                        })} className="px-2 py-1 bg-indigo-700 rounded">افزودن به داشبورد کاربر</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {!loading && symbols.length === 0 && <div className="text-sm text-amber-300">هیچ نمادی پیدا نشد. فیلترها را کم کن.</div>}
-
             {!loading && symbols.length === 0 && <div className="text-sm text-amber-300">هیچ نمادی پیدا نشد. فیلترها را کم کن یا گزینه «فقط دارای دیتا» را خاموش کن.</div>}
-
             {loading && <div className="text-sm text-slate-400">در حال دریافت لیست...</div>}
           </section>
         )}
