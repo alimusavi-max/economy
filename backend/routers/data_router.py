@@ -1,30 +1,33 @@
 from datetime import date
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any
+
 from database.database import get_db
 from database.models import EconomicData, Indicator
+from services.ecb_service import fetch_and_store_ecb_data
+from services.dbnomics_service import fetch_and_store_dbnomics_data
+from services.fred_service import fetch_and_store_fred_series
+from services.market_service import fetch_and_store_market_data
+from services.worldbank_service import fetch_world_bank_data
 
 router = APIRouter(prefix="/api/data", tags=["Data API"])
 
 
 class UpdateIntervalRequest(BaseModel):
-    update_interval_days: int
+    update_interval_days: int = Field(ge=1, le=3650)
+
+
+class FormulaRequest(BaseModel):
+    formula: str
+    variables: Dict[str, str]
 
 
 @router.get("/summary")
 async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
-    """
-    خلاصه مناسب داشبورد:
-    - تعداد کل شاخص‌ها
-    - تعداد شاخص‌های دارای داده
-    - تعداد رکوردهای اقتصادی
-    - تفکیک منبعی برای ویجت/کارت‌های داشبورد
-    """
     total_indicators_q = await db.execute(select(func.count(Indicator.id)))
     total_indicators = total_indicators_q.scalar() or 0
 
@@ -68,17 +71,80 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/freshness")
+async def get_freshness_overview(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(
+            Indicator.id,
+            Indicator.symbol,
+            Indicator.source,
+            Indicator.update_interval_days,
+            Indicator.last_updated,
+        )
+    )
+    rows = result.all()
+    today = date.today()
+
+    stale = 0
+    never_updated = 0
+    healthy = 0
+    due_soon = 0
+
+    details = []
+    for row in rows:
+        if row.last_updated is None:
+            status = "never_updated"
+            never_updated += 1
+            days_since_update = None
+            days_until_due = 0
+        else:
+            days_since_update = (today - row.last_updated).days
+            days_until_due = row.update_interval_days - days_since_update
+            if days_until_due <= 0:
+                status = "stale"
+                stale += 1
+            elif days_until_due <= 3:
+                status = "due_soon"
+                due_soon += 1
+            else:
+                status = "healthy"
+                healthy += 1
+
+        details.append(
+            {
+                "id": row.id,
+                "symbol": row.symbol,
+                "source": row.source,
+                "status": status,
+                "last_updated": row.last_updated,
+                "update_interval_days": row.update_interval_days,
+                "days_since_update": days_since_update,
+                "days_until_due": days_until_due,
+            }
+        )
+
+    return {
+        "totals": {
+            "all": len(rows),
+            "healthy": healthy,
+            "due_soon": due_soon,
+            "stale": stale,
+            "never_updated": never_updated,
+        },
+        "generated_at": today,
+        "items": details,
+    }
+
+
 @router.get("/symbols/available")
 async def get_available_symbols(
     db: AsyncSession = Depends(get_db),
     source: Optional[str] = Query(default=None, description="فیلتر منبع مثل FRED/IMF/OECD"),
+    dbnomics_provider: Optional[str] = Query(default=None, description="فیلتر زیرمنبع DBNOMICS مثل CBI/SAMA/BOE"),
     with_data_only: bool = Query(default=False, description="فقط شاخص‌هایی که دیتای زمانی دارند"),
+    search: Optional[str] = Query(default=None, description="جستجو روی name/symbol/source"),
     limit: int = Query(default=300, ge=1, le=2000),
 ):
-    """
-    دریافت لیست شاخص‌ها برای فرانت.
-    خروجی غنی‌تر شده تا داشبورد بتواند وضعیت نمایش/فیلتر را بهتر مدیریت کند.
-    """
     query = (
         select(
             Indicator.id,
@@ -86,6 +152,7 @@ async def get_available_symbols(
             Indicator.name,
             Indicator.source,
             Indicator.frequency,
+            Indicator.dbnomics_provider,
             Indicator.update_interval_days,
             Indicator.last_updated,
             func.count(EconomicData.id).label("data_points_count"),
@@ -97,12 +164,25 @@ async def get_available_symbols(
     if source:
         query = query.where(Indicator.source == source.upper())
 
+    if dbnomics_provider:
+        query = query.where(Indicator.source == "DBNOMICS")
+        query = query.where(Indicator.dbnomics_provider == dbnomics_provider.upper())
+
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.where(
+            Indicator.symbol.ilike(pattern)
+            | Indicator.name.ilike(pattern)
+            | Indicator.source.ilike(pattern)
+        )
+
     query = query.group_by(
         Indicator.id,
         Indicator.symbol,
         Indicator.name,
         Indicator.source,
         Indicator.frequency,
+        Indicator.dbnomics_provider,
         Indicator.update_interval_days,
         Indicator.last_updated,
     )
@@ -122,6 +202,7 @@ async def get_available_symbols(
             "name": row.name,
             "source": row.source,
             "frequency": row.frequency,
+            "dbnomics_provider": row.dbnomics_provider,
             "update_interval_days": row.update_interval_days,
             "last_updated": row.last_updated,
             "data_points_count": int(row.data_points_count or 0),
@@ -144,6 +225,125 @@ async def update_symbol_interval(symbol: str, request: UpdateIntervalRequest, db
     await db.commit()
 
     return {"success": True, "message": f"بازه آپدیت نماد {symbol} به {request.update_interval_days} روز تغییر یافت."}
+
+
+@router.post("/symbols/{symbol}/refresh-now")
+async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    if not indicator:
+        raise HTTPException(status_code=404, detail="نماد یافت نشد")
+
+    if indicator.source == "FRED":
+        return await fetch_and_store_fred_series(
+            session=db,
+            series_id=indicator.symbol,
+            name=indicator.name,
+            frequency=indicator.frequency or "Monthly",
+        )
+
+    if indicator.source == "YAHOO":
+        return await fetch_and_store_market_data(session=db, symbol=indicator.symbol)
+
+    if indicator.source == "WORLDBANK":
+        parts = indicator.symbol.split("_", 2)
+        if len(parts) == 3:
+            _, country, wb_indicator = parts
+            return await fetch_world_bank_data(db, country, wb_indicator, indicator.name)
+
+    if indicator.source == "ECB":
+        return await fetch_and_store_ecb_data(db, indicator.symbol)
+
+    if indicator.source == "DBNOMICS":
+        return await fetch_and_store_dbnomics_data(db, indicator.symbol)
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"برای منبع {indicator.source} هنوز رفرش مستقیم پیاده‌سازی نشده است.",
+    )
+
+
+@router.get("/lab/combine")
+async def combine_indicators_data(
+    sym1: str,
+    sym2: str,
+    operation: str,
+    db: AsyncSession = Depends(get_db)
+):
+    if operation not in {"add", "sub", "mul", "div"}:
+        raise HTTPException(status_code=400, detail="عملیات نامعتبر است. از add/sub/mul/div استفاده کنید.")
+
+    ind1_res = await db.execute(select(Indicator).where(Indicator.symbol == sym1.upper()))
+    ind1 = ind1_res.scalar_one_or_none()
+
+    ind2_res = await db.execute(select(Indicator).where(Indicator.symbol == sym2.upper()))
+    ind2 = ind2_res.scalar_one_or_none()
+
+    if not ind1 or not ind2:
+        raise HTTPException(status_code=404, detail="یکی از شاخص‌ها یافت نشد.")
+
+    data1_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind1.id))
+    data2_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind2.id))
+
+    dict1 = {r.date: r.value for r in data1_res.scalars().all()}
+    dict2 = {r.date: r.value for r in data2_res.scalars().all()}
+
+    common_dates = sorted(list(set(dict1.keys()) & set(dict2.keys())))
+
+    combined_data = []
+    for d in common_dates:
+        v1, v2 = dict1[d], dict2[d]
+        try:
+            if operation == "add":
+                val = v1 + v2
+            elif operation == "sub":
+                val = v1 - v2
+            elif operation == "mul":
+                val = v1 * v2
+            else:
+                val = v1 / v2 if v2 != 0 else 0
+
+            combined_data.append({"date": str(d), "value": round(val, 4)})
+        except Exception:
+            continue
+
+    return combined_data
+
+
+@router.post("/lab/formula")
+async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Depends(get_db)):
+    import math
+
+    series_data: Dict[str, Dict[Any, float]] = {}
+
+    for var_name, symbol in request.variables.items():
+        ind_res = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+        ind = ind_res.scalar_one_or_none()
+        if not ind:
+            raise HTTPException(status_code=404, detail=f"نماد {symbol} یافت نشد.")
+
+        data_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind.id))
+        records = data_res.scalars().all()
+        series_data[var_name] = {r.date: r.value for r in records}
+
+    if not series_data:
+        return []
+
+    common_dates = set.intersection(*[set(d.keys()) for d in series_data.values()])
+    common_dates = sorted(list(common_dates))
+
+    safe_math_env = {k: getattr(math, k) for k in dir(math) if not k.startswith("__")}
+
+    combined_data = []
+    for d in common_dates:
+        local_vars = {var_name: series_data[var_name][d] for var_name in request.variables.keys()}
+        try:
+            val = eval(request.formula, {"__builtins__": {}}, {**safe_math_env, **local_vars})
+            combined_data.append({"date": str(d), "value": round(val, 4)})
+        except Exception:
+            continue
+
+    return combined_data
 
 
 @router.get("/{symbol}")
@@ -172,95 +372,3 @@ async def get_economic_data(symbol: str, db: AsyncSession = Depends(get_db)):
         "total_records": len(chart_data),
         "data": chart_data,
     }
-
-
-@router.get("/lab/combine")
-async def combine_indicators_data(
-    sym1: str, 
-    sym2: str, 
-    operation: str, # "add", "sub", "mul", "div"
-    db: AsyncSession = Depends(get_db)
-):
-    """موتور آزمایشگاه: ترکیب دیتای دو شاخص اقتصادی"""
-    # دریافت اطلاعات شاخص اول
-    ind1_res = await db.execute(select(Indicator).where(Indicator.symbol == sym1.upper()))
-    ind1 = ind1_res.scalar_one_or_none()
-    
-    # دریافت اطلاعات شاخص دوم
-    ind2_res = await db.execute(select(Indicator).where(Indicator.symbol == sym2.upper()))
-    ind2 = ind2_res.scalar_one_or_none()
-
-    if not ind1 or not ind2:
-        raise HTTPException(status_code=404, detail="یکی از شاخص‌ها یافت نشد.")
-
-    # دریافت دیتای هر دو شاخص
-    data1_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind1.id))
-    data2_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind2.id))
-    
-    # تبدیل به دیکشنری {تاریخ: مقدار} برای تطبیق سریع
-    dict1 = {r.date: r.value for r in data1_res.scalars().all()}
-    dict2 = {r.date: r.value for r in data2_res.scalars().all()}
-    
-    # پیدا کردن تاریخ‌های مشترک
-    common_dates = sorted(list(set(dict1.keys()) & set(dict2.keys())))
-    
-    combined_data = []
-    for d in common_dates:
-        v1, v2 = dict1[d], dict2[d]
-        try:
-            if operation == "add": val = v1 + v2
-            elif operation == "sub": val = v1 - v2
-            elif operation == "mul": val = v1 * v2
-            elif operation == "div": val = v1 / v2 if v2 != 0 else 0
-            else: continue
-            
-            combined_data.append({"date": str(d), "value": round(val, 4)})
-        except Exception:
-            continue
-            
-    return combined_data
-
-class FormulaRequest(BaseModel):
-    formula: str
-    variables: Dict[str, str]
-
-@router.post("/lab/formula")
-async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Depends(get_db)):
-    """موتور پیشرفته آزمایشگاه: محاسبه فرمول‌های ریاضی سفارشی روی دیتای سری زمانی"""
-    import math
-    
-    series_data = {}
-    
-    # ۱. استخراج دیتای تمام متغیرهای ارسال شده (مثل A, B, C)
-    for var_name, symbol in request.variables.items():
-        ind_res = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
-        ind = ind_res.scalar_one_or_none()
-        if not ind:
-            raise HTTPException(status_code=404, detail=f"نماد {symbol} یافت نشد.")
-        
-        data_res = await db.execute(select(EconomicData).where(EconomicData.indicator_id == ind.id))
-        records = data_res.scalars().all()
-        series_data[var_name] = {r.date: r.value for r in records}
-    
-    if not series_data:
-        return []
-        
-    # ۲. پیدا کردن تاریخ‌های مشترک بین تمام شاخص‌ها
-    common_dates = set.intersection(*[set(d.keys()) for d in series_data.values()])
-    common_dates = sorted(list(common_dates))
-    
-    # محیط امن برای اجرای فرمول ریاضی
-    safe_math_env = {k: getattr(math, k) for k in dir(math) if not k.startswith("__")}
-    
-    combined_data = []
-    for d in common_dates:
-        # جایگذاری مقدار هر متغیر در آن تاریخ خاص
-        local_vars = {var_name: series_data[var_name][d] for var_name in request.variables.keys()}
-        try:
-            # اجرای فرمول (مثلا A / B * 100)
-            val = eval(request.formula, {"__builtins__": {}}, {**safe_math_env, **local_vars})
-            combined_data.append({"date": str(d), "value": round(val, 4)})
-        except Exception as e:
-            continue
-            
-    return combined_data
