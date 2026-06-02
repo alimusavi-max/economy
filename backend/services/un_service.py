@@ -49,11 +49,14 @@ async def auto_discover_un(session: AsyncSession):
 
     records_to_insert = []
 
-    # پردازش پاسخ SDMX سازمان ملل
+    # پردازش پاسخ SDMX سازمان ملل (سازگار با SDMX-JSON 1.0 و 2.0)
     if response_json:
         try:
             dataflows = (
-                response_json.get("data", {}).get("dataflows", [])
+                response_json.get("data", {}).get("dataflows")
+                or response_json.get("data", {}).get("Dataflows")
+                or response_json.get("Structures", {}).get("Dataflows")
+                or response_json.get("Structures", {}).get("dataflows")
                 or []
             )
             for flow in dataflows:
