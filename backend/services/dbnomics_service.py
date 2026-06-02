@@ -27,7 +27,7 @@ async def auto_discover_central_bank(session: AsyncSession, bank_code: str):
         
         try:
             # تایم‌اوت را بالاتر می‌بریم برای اینترنت‌های نوسان‌دار
-            response = requests.get(url, headers=HEADERS, timeout=40)
+            response = await asyncio.to_thread(requests.get, url, headers=HEADERS, timeout=40)
             
             if response.status_code == 400:
                 print(f"   ❌ سرور درخواست را رد کرد. (احتمالا پارامترهای نامعتبر)")
@@ -102,7 +102,7 @@ async def fetch_and_store_dbnomics_data(session: AsyncSession, symbol: str):
     success = False
     for attempt in range(3):
         try:
-            res = requests.get(url, headers=HEADERS, timeout=30)
+            res = await asyncio.to_thread(requests.get, url, headers=HEADERS, timeout=30)
             if res.status_code == 200:
                 data = res.json()
                 success = True

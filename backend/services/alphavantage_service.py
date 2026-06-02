@@ -38,7 +38,7 @@ async def fetch_and_store_alphavantage(session: AsyncSession, symbol: str, asset
     success = False
     for attempt in range(3):
         try:
-            response = requests.get(url, timeout=15)
+            response = await asyncio.to_thread(requests.get, url, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 # آلفا ونتیج در صورت رد شدن کلید یا لیمیت شدن پیام ارور در JSON می فرستد

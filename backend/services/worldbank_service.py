@@ -12,7 +12,7 @@ from database.models import Indicator, EconomicData
 async def get_all_worldbank_indicators():
     """دریافت لیست کامل شاخص‌های بانک جهانی برای عملیات crawler."""
     url = "http://api.worldbank.org/v2/indicator?format=json&per_page=25000&page=1"
-    response = requests.get(url, timeout=30)
+    response = await asyncio.to_thread(requests.get, url, timeout=30)
     if response.status_code != 200:
         print(f"خطا در دریافت لیست شاخص‌های بانک جهانی: {response.status_code}")
         return []
@@ -31,7 +31,7 @@ async def fetch_world_bank_data(session: AsyncSession, country: str, indicator_i
 
     print(f"در حال دریافت {name} ({indicator_id}) برای {country}...")
     url = f"http://api.worldbank.org/v2/country/{country_code}/indicator/{indicator_id}?format=json&per_page=20000"
-    response = requests.get(url, timeout=30)
+    response = await asyncio.to_thread(requests.get, url, timeout=30)
 
     if response.status_code != 200:
         return {"success": False, "message": f"خطا در دریافت دیتا از WorldBank: {response.status_code}"}
@@ -105,7 +105,7 @@ async def auto_discover_worldbank_indicators(session: AsyncSession):
         for attempt in range(max_retries):
             try:
                 # استفاده از timeout تا در صورت قطعی اینترنت، برنامه قفل نکند
-                response = requests.get(url, timeout=15)
+                response = await asyncio.to_thread(requests.get, url, timeout=15)
                 if response.status_code == 200:
                     success = True
                     break  # خروج از حلقه تلاش مجدد

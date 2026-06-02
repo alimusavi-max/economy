@@ -6,16 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.database import engine, get_db
+from database.database import AsyncSessionLocal, engine, get_db
 from database.models import AssetMarketData, Base
 
 from routers import data_router, pipeline_router, user_router
 from services.alphavantage_service import fetch_and_store_alphavantage
 from services.bis_service import auto_discover_bis_indicators
 from services.dbnomics_service import auto_discover_all_central_banks, auto_discover_central_bank, fetch_and_store_dbnomics_data
-from routers import data_router, pipeline_router
-from services.alphavantage_service import fetch_and_store_alphavantage
-from services.bis_service import auto_discover_bis_indicators
 from services.discovery_service import auto_discover_all_fred, discover_fred_category, seed_market_symbols
 from services.ecb_service import auto_discover_ecb, fetch_and_store_ecb_data
 from services.eurostat_service import auto_discover_eurostat
@@ -156,9 +153,12 @@ async def trigger_oecd_discovery(db: AsyncSession = Depends(get_db)):
 async def trigger_auto_spider(
     background_tasks: BackgroundTasks,
     source: Optional[str] = "ALL",
-    db: AsyncSession = Depends(get_db),
 ):
-    background_tasks.add_task(run_global_scrapers, db, source)
+    async def _run():
+        async with AsyncSessionLocal() as db:
+            await run_global_scrapers(db, source)
+
+    background_tasks.add_task(_run)
     msg_source = "تمام منابع جهانی" if source == "ALL" else source
     return {
         "success": True,

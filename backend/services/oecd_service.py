@@ -33,8 +33,8 @@ async def auto_discover_oecd_indicators(session: AsyncSession):
     for attempt in range(max_retries):
         try:
             print(f"   ⏳ تلاش {attempt+1}: در حال دریافت لیست کامل از سرورهای پاریس...")
-            response = requests.get(url, headers=headers, timeout=20)
-            
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=20)
+
             if response.status_code == 200:
                 response_json = response.json()
                 break
@@ -100,7 +100,7 @@ async def fetch_and_store_oecd_data(session: AsyncSession, symbol: str):
     success = False
     for attempt in range(3):
         try:
-            response = requests.get(url, headers=headers, timeout=40)
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=40)
             if response.status_code == 200:
                 success = True
                 break

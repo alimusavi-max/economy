@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 from database.models import Indicator
 from dotenv import load_dotenv
-import pandas as pd  # این خط وجود نداره ولی در seed_market_symbols استفاده شده
+import pandas as pd
 
 
 load_dotenv()
@@ -18,9 +18,8 @@ if not FRED_API_KEY:
 # ۱. توابع قبلی (برای تزریق دستی و تکی)
 # ==========================================
 async def discover_fred_category(session: AsyncSession, category_id: int):
-    # (کد قبلی شما برای دریافت یک دسته خاص)
     url = f"https://api.stlouisfed.org/fred/category/series?category_id={category_id}&api_key={FRED_API_KEY}&file_type=json"
-    response = requests.get(url)
+    response = await asyncio.to_thread(requests.get, url, timeout=15)
     if response.status_code != 200: return {"success": False}
     series_list = response.json().get('seriess', [])
     records = [{"symbol": s['id'], "name": s['title'], "source": "FRED", "frequency": s.get('frequency_short', 'M'), "update_interval_days": 30} for s in series_list]
@@ -101,7 +100,7 @@ async def auto_discover_all_fred(session: AsyncSession):
     tags_success = False
     for attempt in range(max_retries):
         try:
-            tags_resp = requests.get(tags_url, timeout=15)
+            tags_resp = await asyncio.to_thread(requests.get, tags_url, timeout=15)
             if tags_resp.status_code == 200:
                 tags_success = True
                 break
@@ -127,7 +126,7 @@ async def auto_discover_all_fred(session: AsyncSession):
         series_success = False
         for attempt in range(max_retries):
             try:
-                series_resp = requests.get(series_url, timeout=15)
+                series_resp = await asyncio.to_thread(requests.get, series_url, timeout=15)
                 if series_resp.status_code == 200:
                     series_success = True
                     break

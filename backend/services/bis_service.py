@@ -1,15 +1,13 @@
 import asyncio
-import requests
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
-from database.models import Indicator
-
 import csv
 import io
+import requests
 from datetime import datetime, date
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Indicator, EconomicData
+from database.models import EconomicData, Indicator
 
 
 async def auto_discover_bis_indicators(session: AsyncSession):
@@ -28,7 +26,7 @@ async def auto_discover_bis_indicators(session: AsyncSession):
     # تلاش برای دریافت دیتا با مکانیزم ضد قطعی
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, headers=headers, timeout=20)
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=20)
             if response.status_code == 200:
                 response_json = response.json()
                 break
@@ -106,7 +104,7 @@ async def fetch_and_store_bis_data(session: AsyncSession, symbol: str):
     for attempt in range(3):
         try:
             # استفاده از stream=True برای جلوگیری از پر شدن RAM در فایل‌های گیگابایتی
-            response = requests.get(url, headers=headers, timeout=30)
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=30)
             if response.status_code == 200:
                 success = True
                 break
