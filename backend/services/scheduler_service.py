@@ -7,16 +7,20 @@ from sqlalchemy import select
 from database.database import AsyncSessionLocal
 from database.models import Indicator
 
-from services.fred_service import fetch_and_store_fred_series
-from services.market_service import fetch_and_store_market_data
-from services.worldbank_service import fetch_world_bank_data
-from services.ecb_service import fetch_and_store_ecb_data
-from services.dbnomics_service import fetch_and_store_dbnomics_data
-from services.imf_service import fetch_and_store_imf_data
-from services.oecd_service import fetch_and_store_oecd_data
-from services.bis_service import fetch_and_store_bis_data
-from services.eurostat_service import fetch_and_store_eurostat_data
 from services.alphavantage_service import fetch_and_store_alphavantage
+from services.bis_service import fetch_and_store_bis_data
+from services.dbnomics_service import fetch_and_store_dbnomics_data
+from services.ecb_service import fetch_and_store_ecb_data
+from services.eurostat_service import fetch_and_store_eurostat_data
+from services.fao_service import fetch_and_store_fao_data
+from services.fred_service import fetch_and_store_fred_series
+from services.ilo_service import fetch_and_store_ilo_data
+from services.imf_service import fetch_and_store_imf_data
+from services.market_service import fetch_and_store_market_data
+from services.oecd_service import fetch_and_store_oecd_data
+from services.treasury_service import fetch_and_store_treasury_data
+from services.un_service import fetch_and_store_un_data
+from services.worldbank_service import fetch_world_bank_data
 
 
 async def check_and_update_stale_data():
@@ -58,6 +62,14 @@ async def check_and_update_stale_data():
                     await fetch_and_store_eurostat_data(session, ind.symbol)
                 elif ind.source == "ALPHAVANTAGE":
                     await fetch_and_store_alphavantage(session, ind.symbol)
+                elif ind.source == "ILO":
+                    await fetch_and_store_ilo_data(session, ind.symbol)
+                elif ind.source == "TREASURY":
+                    await fetch_and_store_treasury_data(session, ind.symbol)
+                elif ind.source == "FAO":
+                    await fetch_and_store_fao_data(session, ind.symbol)
+                elif ind.source == "UN":
+                    await fetch_and_store_un_data(session, ind.symbol)
             except Exception as e:
                 print(f"خطا در آپدیت {ind.symbol}: {e}")
 

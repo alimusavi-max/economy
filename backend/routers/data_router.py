@@ -8,16 +8,20 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import get_db
-from database.models import EconomicData, Indicator
+from database.models import AssetMarketData, EconomicData, Indicator
 from services.alphavantage_service import fetch_and_store_alphavantage
 from services.bis_service import fetch_and_store_bis_data
 from services.ecb_service import fetch_and_store_ecb_data
 from services.dbnomics_service import fetch_and_store_dbnomics_data
 from services.eurostat_service import fetch_and_store_eurostat_data
+from services.fao_service import fetch_and_store_fao_data
 from services.fred_service import fetch_and_store_fred_series
+from services.ilo_service import fetch_and_store_ilo_data
 from services.imf_service import fetch_and_store_imf_data
 from services.market_service import fetch_and_store_market_data
 from services.oecd_service import fetch_and_store_oecd_data
+from services.treasury_service import fetch_and_store_treasury_data
+from services.un_service import fetch_and_store_un_data
 from services.worldbank_service import fetch_world_bank_data
 
 router = APIRouter(prefix="/api/data", tags=["Data API"])
@@ -468,6 +472,18 @@ async def refresh_symbol_now(symbol: str, db: AsyncSession = Depends(get_db)):
         if indicator.source == "ALPHAVANTAGE":
             return await fetch_and_store_alphavantage(db, indicator.symbol)
 
+        if indicator.source == "ILO":
+            return await fetch_and_store_ilo_data(db, indicator.symbol)
+
+        if indicator.source == "TREASURY":
+            return await fetch_and_store_treasury_data(db, indicator.symbol)
+
+        if indicator.source == "FAO":
+            return await fetch_and_store_fao_data(db, indicator.symbol)
+
+        if indicator.source == "UN":
+            return await fetch_and_store_un_data(db, indicator.symbol)
+
         raise HTTPException(
             status_code=400,
             detail=f"برای منبع {indicator.source} هنوز رفرش مستقیم پیاده‌سازی نشده است.",
@@ -588,6 +604,16 @@ async def get_economic_data(symbol: str, db: AsyncSession = Depends(get_db)):
     records = data_result.scalars().all()
 
     chart_data = [{"date": str(r.date), "value": r.value} for r in records]
+
+    # اگر در EconomicData چیزی نبود و منبع YAHOO یا ALPHAVANTAGE بود، از AssetMarketData بخوان
+    if not chart_data and indicator.source in ("YAHOO", "ALPHAVANTAGE"):
+        asset_result = await db.execute(
+            select(AssetMarketData)
+            .where(AssetMarketData.symbol == indicator.symbol)
+            .order_by(AssetMarketData.date.asc())
+        )
+        asset_records = asset_result.scalars().all()
+        chart_data = [{"date": str(r.date), "value": r.close_price} for r in asset_records]
 
     return {
         "indicator": {
