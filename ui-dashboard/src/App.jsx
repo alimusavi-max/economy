@@ -42,7 +42,24 @@ const CHART_RANGES = [
 const extractErrorMessage = (err, fallback) => err?.response?.data?.detail || err?.message || fallback
 const formatCompactNumber = (value) => Intl.NumberFormat('fa-IR', { notation: 'compact', maximumFractionDigits: 2 }).format(value || 0)
 const formatPreciseNumber = (value) => Intl.NumberFormat('fa-IR', { maximumFractionDigits: 4 }).format(value || 0)
-const sourceSupportsManualRefresh = (source) => ['FRED', 'YAHOO', 'WORLDBANK', 'ECB', 'DBNOMICS', 'IMF', 'OECD', 'BIS', 'EUROSTAT', 'ALPHAVANTAGE'].includes(source)
+const sourceSupportsManualRefresh = (source) => ['FRED', 'YAHOO', 'WORLDBANK', 'ECB', 'DBNOMICS', 'IMF', 'OECD', 'BIS', 'EUROSTAT', 'ALPHAVANTAGE', 'ILO', 'TREASURY', 'FAO', 'UN'].includes(source)
+
+const SOURCE_CONFIGS = [
+  { key: 'FRED',         label: 'FRED',         desc: 'فدرال رزرو آمریکا',          discoverPath: '/discover/auto-spider?source=FRED',      color: 'bg-blue-700',    interval: '۳۰ روز' },
+  { key: 'WORLDBANK',    label: 'World Bank',    desc: 'بانک جهانی (۲۶۶ کشور)',      discoverPath: '/discover/auto-spider?source=WORLDBANK',  color: 'bg-green-700',   interval: '۱۸۰ روز' },
+  { key: 'IMF',          label: 'IMF',           desc: 'صندوق بین‌المللی پول',        discoverPath: '/discover/imf',                           color: 'bg-purple-700',  interval: '۹۰ روز' },
+  { key: 'OECD',         label: 'OECD',          desc: 'سازمان همکاری اقتصادی',      discoverPath: '/discover/oecd',                          color: 'bg-orange-700',  interval: '۳۰ روز' },
+  { key: 'BIS',          label: 'BIS',           desc: 'تسویه‌حساب بین‌المللی',       discoverPath: '/discover/auto-spider?source=BIS',        color: 'bg-red-700',     interval: '۳۰ روز' },
+  { key: 'ECB',          label: 'ECB',           desc: 'بانک مرکزی اروپا',           discoverPath: '/discover/auto-spider?source=ECB',        color: 'bg-yellow-700',  interval: '۳۰ روز' },
+  { key: 'EUROSTAT',     label: 'Eurostat',      desc: 'مرکز آمار اتحادیه اروپا',    discoverPath: '/discover/auto-spider?source=EUROSTAT',   color: 'bg-indigo-700',  interval: '۳۰ روز' },
+  { key: 'DBNOMICS',     label: 'DB.NOMICS',     desc: '۹۰+ بانک مرکزی دنیا',        discoverPath: '/discover/dbnomics',                      color: 'bg-fuchsia-700', interval: '۱۵ روز' },
+  { key: 'YAHOO',        label: 'Yahoo Finance', desc: 'سهام، فارکس، کریپتو',        discoverPath: '/discover/market-seed',                   color: 'bg-cyan-700',    interval: '۱ روز' },
+  { key: 'ALPHAVANTAGE', label: 'Alpha Vantage', desc: 'بازارهای مالی',              discoverPath: null,                                      color: 'bg-rose-700',    interval: '۱ روز' },
+  { key: 'ILO',          label: 'ILO',           desc: 'سازمان بین‌المللی کار',       discoverPath: '/discover/ilo',                           color: 'bg-teal-700',    interval: '۹۰ روز' },
+  { key: 'FAO',          label: 'FAO',           desc: 'خواربار و کشاورزی ملل',       discoverPath: '/discover/fao',                           color: 'bg-lime-700',    interval: '۱۸۰ روز' },
+  { key: 'UN',           label: 'UN Data',       desc: 'سازمان ملل متحد (SDG)',       discoverPath: '/discover/un',                            color: 'bg-sky-700',     interval: '۹۰ روز' },
+  { key: 'TREASURY',     label: 'US Treasury',   desc: 'خزانه‌داری ایالات متحده',     discoverPath: '/discover/treasury',                      color: 'bg-amber-700',   interval: '۳۰ روز' },
+]
 
 const withRetry = async (fn, retries = 1) => {
   let lastErr
@@ -366,6 +383,7 @@ export default function App() {
           </div>
           <div className="flex gap-2 flex-wrap">
             <button className="px-4 py-2 bg-slate-800 rounded-lg" onClick={loadDashboard}><RefreshCcw size={16} className="inline ml-1" /> رفرش</button>
+            <button className="px-4 py-2 bg-emerald-700 rounded-lg font-semibold" onClick={() => runPipeline('/discover/auto-spider?source=ALL', 'کاوش همه ۱۴ منبع جهانی آغاز شد — چند دقیقه صبر کن.')}>🌍 کاوش همه منابع</button>
             <button className="px-4 py-2 bg-cyan-700 rounded-lg" onClick={() => runPipeline('/pipeline/trigger-all', 'دریافت موازی داده‌ها شروع شد.')}>دریافت سریع</button>
             <button className="px-4 py-2 bg-fuchsia-700 rounded-lg" onClick={() => runPipeline('/discover/dbnomics', 'کاوش بانک‌های مرکزی DBNOMICS آغاز شد.')}>کاوش بانک‌های مرکزی</button>
             <button className="px-4 py-2 bg-rose-700 rounded-lg" onClick={logout}><LogOut size={16} className="inline ml-1" /> خروج</button>
@@ -374,8 +392,8 @@ export default function App() {
 
         {message && <div className="bg-slate-900/80 border border-slate-700 rounded-lg px-4 py-2 text-sm">{message}</div>}
 
-        <div className="flex gap-2">
-          {[['dashboard', 'داشبورد من'], ['manage', 'مدیریت شاخص‌ها'], ['users', 'تنظیمات حساب'], ['lab', 'آزمایشگاه']].map(([key, label]) => (
+        <div className="flex gap-2 flex-wrap">
+          {[['dashboard', 'داشبورد من'], ['sources', 'منابع داده'], ['manage', 'مدیریت شاخص‌ها'], ['users', 'تنظیمات حساب'], ['lab', 'آزمایشگاه']].map(([key, label]) => (
             <button key={key} onClick={() => setActiveTab(key)} className={`px-4 py-2 rounded-lg ${activeTab === key ? 'bg-cyan-700' : 'bg-slate-800'}`}>{label}</button>
           ))}
         </div>
@@ -447,6 +465,10 @@ export default function App() {
               </ul>
             </div>
           </section>
+        )}
+
+        {activeTab === 'sources' && (
+          <SourcesPanel summary={summary} runPipeline={runPipeline} setMessage={setMessage} />
         )}
 
         {activeTab === 'manage' && (
@@ -611,6 +633,87 @@ export default function App() {
         </div>
       )}
     </div>
+  )
+}
+
+function SourcesPanel({ summary, runPipeline, setMessage }) {
+  const [busy, setBusy] = useState({})
+
+  const sourceStats = useMemo(() => {
+    const map = {}
+    for (const s of summary?.sources || []) map[s.source] = s
+    return map
+  }, [summary])
+
+  const discover = async (cfg) => {
+    if (!cfg.discoverPath) return setMessage(`${cfg.label} نیاز به کانفیگ دستی دارد.`)
+    setBusy((b) => ({ ...b, [cfg.key]: true }))
+    try {
+      await runPipeline(cfg.discoverPath, `کاوش ${cfg.label} آغاز شد — چند دقیقه صبر کن.`)
+    } finally {
+      setBusy((b) => ({ ...b, [cfg.key]: false }))
+    }
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold">منابع داده جهانی (۱۴ منبع)</h2>
+        <button
+          className="px-4 py-2 bg-emerald-700 rounded-lg text-sm font-semibold"
+          onClick={() => runPipeline('/discover/auto-spider?source=ALL', 'کاوش همه ۱۴ منبع جهانی در پس‌زمینه آغاز شد.')}
+        >
+          🌍 کاوش همه منابع
+        </button>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {SOURCE_CONFIGS.map((cfg) => {
+          const stats = sourceStats[cfg.key]
+          const hasData = stats?.indicators_with_data > 0
+          return (
+            <div key={cfg.key} className="bg-slate-900/80 border border-slate-700 rounded-xl p-4 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold text-sm">{cfg.label}</div>
+                  <div className="text-xs text-slate-400 mt-0.5">{cfg.desc}</div>
+                </div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full text-white shrink-0 ${cfg.color}`}>{cfg.key}</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1 text-xs text-slate-400">
+                <div>شاخص‌ها: <span className="text-slate-200">{stats?.indicators ?? '—'}</span></div>
+                <div>دارای داده: <span className={hasData ? 'text-emerald-400' : 'text-slate-500'}>{stats?.indicators_with_data ?? '—'}</span></div>
+                <div className="col-span-2">بازه آپدیت: <span className="text-slate-300">{cfg.interval}</span></div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  disabled={!cfg.discoverPath || busy[cfg.key]}
+                  onClick={() => discover(cfg)}
+                  className="flex-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-xs"
+                >
+                  {busy[cfg.key] ? '...' : 'کاوش شاخص‌ها'}
+                </button>
+                {!hasData && stats?.indicators > 0 && (
+                  <span className="text-[10px] text-amber-400 self-center">نیاز به Fetch</span>
+                )}
+                {hasData && (
+                  <span className="text-[10px] text-emerald-400 self-center">✓ آماده</span>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="bg-slate-900/60 border border-slate-700 rounded-xl p-4 text-sm text-slate-400 space-y-1">
+        <p className="text-slate-300 font-medium">راهنمای شروع:</p>
+        <p>۱. دکمه <span className="text-emerald-400">«کاوش همه منابع»</span> را بزن — فهرست تمام شاخص‌ها در پس‌زمینه دریافت می‌شود (چند دقیقه طول می‌کشد)</p>
+        <p>۲. بعد از کاوش، از تب <span className="text-cyan-400">مدیریت شاخص‌ها</span> هر شاخصی را انتخاب کن و «دریافت فوری» بزن تا داده‌های تاریخی‌اش بارگذاری شود</p>
+        <p>۳. شاخص‌های موردنظر را به <span className="text-indigo-400">داشبورد شخصی</span> اضافه کن و نمودار را ببین</p>
+      </div>
+    </section>
   )
 }
 
