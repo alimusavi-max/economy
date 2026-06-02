@@ -44,11 +44,21 @@ async def auto_discover_ecb(session: AsyncSession):
 
     records_to_insert = []
     
-    # پردازش دیتای اتوماتیک
-    if response_json and "data" in response_json and "dataflows" in response_json["data"]:
-        for flow in response_json["data"]["dataflows"]:
+    # پردازش دیتای اتوماتیک (سازگار با SDMX-JSON 1.0 و 2.0)
+    dataflows = []
+    if response_json:
+        dataflows = (
+            response_json.get("data", {}).get("dataflows")
+            or response_json.get("data", {}).get("Dataflows")
+            or response_json.get("Structures", {}).get("Dataflows")
+            or response_json.get("Structures", {}).get("dataflows")
+            or []
+        )
+    if dataflows:
+        for flow in dataflows:
             flow_id = (flow.get("id") or "").upper().strip()
-            name = flow.get("name") or flow_id
+            raw_name = flow.get("name") or flow.get("names", {})
+            name = (raw_name.get("en") if isinstance(raw_name, dict) else raw_name) or flow_id
             if flow_id:
                 records_to_insert.append({
                     "symbol": f"ECB_{flow_id}"[:50],
@@ -58,7 +68,7 @@ async def auto_discover_ecb(session: AsyncSession):
                     "update_interval_days": 30
                 })
     else:
-        print("خطا در ارتباط با سرورهای ECB برای دریافت اتوماتیک.")
+        print("خطا در ارتباط با سرورهای ECB یا پارس ساختار SDMX.")
 
     # تزریق به دیتابیس
     if records_to_insert:

@@ -118,9 +118,6 @@ export default function App() {
   const [expandedChartData, setExpandedChartData] = useState([])
   const [expandedChartRange, setExpandedChartRange] = useState('ALL')
 
-  const [variables, setVariables] = useState([{ id: 'A', symbol: '' }, { id: 'B', symbol: '' }])
-  const [formula, setFormula] = useState('(A / B) * 100')
-  const [labData, setLabData] = useState([])
   const [backendConnected, setBackendConnected] = useState(null)
 
   const activeUser = useMemo(() => users.find((u) => String(u.id) === String(selectedUserId)) || null, [users, selectedUserId])
@@ -352,16 +349,6 @@ export default function App() {
     await persistDashboardSymbols(defaultDashboardSymbols.filter((item) => item !== symbol), `${symbol} از داشبورد حذف شد.`)
   }
 
-  const runFormula = async () => {
-    const variablesPayload = {}
-    for (const v of variables) { if (!v.symbol) return setMessage('برای همه متغیرها نماد انتخاب کن.'); variablesPayload[v.id] = v.symbol }
-    try {
-      const res = await axios.post(`${API_BASE}/data/lab/formula`, { formula, variables: variablesPayload })
-      setLabData(res.data || [])
-      if (!res.data?.length) setMessage('داده مشترک برای این ترکیب پیدا نشد.')
-    } catch (err) { setMessage(extractErrorMessage(err, 'فرمول معتبر نیست یا دیتای کافی وجود ندارد.')) }
-  }
-
   const availableSources = useMemo(() => (summary?.sources || []).map((s) => s.source), [summary])
   const expandedRangeData = useMemo(() => filterChartByRange(expandedChartData, expandedChartRange), [expandedChartData, expandedChartRange])
   const expandedAverage = useMemo(() => {
@@ -561,41 +548,7 @@ export default function App() {
         )}
 
         {activeTab === 'lab' && (
-          <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
-            <h2 className="font-semibold flex items-center gap-2"><FlaskConical size={18} /> آزمایشگاه ترکیب شاخص‌ها</h2>
-            <div className="grid md:grid-cols-3 gap-3">
-              {variables.map((v, idx) => (
-                <div key={v.id} className="bg-slate-950 rounded-lg p-2 space-y-2">
-                  <div className="text-xs text-slate-400">متغیر {v.id}</div>
-                  <select value={v.symbol} onChange={(e) => setVariables((prev) => prev.map((item) => item.id === v.id ? { ...item, symbol: e.target.value } : item))} className="w-full bg-slate-900 rounded px-2 py-2">
-                    <option value="">انتخاب نماد</option>
-                    {symbols.filter((s) => s.has_data).map((s) => <option key={`${v.id}-${s.id}`} value={s.symbol}>{s.symbol}</option>)}
-                  </select>
-                  {idx > 1 && <button onClick={() => setVariables((prev) => prev.filter((item) => item.id !== v.id))} className="text-xs text-red-400">حذف</button>}
-                </div>
-              ))}
-            </div>
-            <button className="px-3 py-1 bg-slate-800 rounded" onClick={() => setVariables((prev) => [...prev, { id: String.fromCharCode(65 + prev.length), symbol: '' }])}>افزودن متغیر</button>
-            <div className="flex gap-2">
-              <input value={formula} onChange={(e) => setFormula(e.target.value)} className="flex-1 bg-slate-950 rounded-lg px-3 py-2 font-mono" />
-              <button className="px-4 py-2 bg-purple-700 rounded-lg" onClick={runFormula}>اجرا</button>
-            </div>
-            <div className="h-[360px] bg-slate-950 rounded-lg p-3">
-              {labData.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-slate-400">نتیجه اینجا نمایش داده می‌شود.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={labData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="date" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" />
-                    <Tooltip />
-                    <Area dataKey="value" stroke="#c084fc" fill="#c084fc33" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </section>
+          <LabPanel symbols={symbols} API_BASE={API_BASE} setMessage={setMessage} />
         )}
       </div>
 
@@ -633,6 +586,262 @@ export default function App() {
         </div>
       )}
     </div>
+  )
+}
+
+const FORMULA_TEMPLATES = [
+  { label: 'تورم واقعی (YoY%)', formula: 'pct_change(A, 12)', hint: 'A = شاخص قیمت ماهانه' },
+  { label: 'نرخ واقعی بهره', formula: 'A - B', hint: 'A = نرخ اسمی، B = تورم' },
+  { label: 'نسبت به GDP (%)', formula: 'A / B * 100', hint: 'A = متغیر، B = GDP' },
+  { label: 'سرعت گردش پول', formula: 'A / B', hint: 'A = GDP، B = نقدینگی' },
+  { label: 'میانگین متحرک ۱۲م', formula: 'rolling_mean(A, 12)', hint: 'A = سری ماهانه' },
+  { label: 'میانگین متحرک ۴ف', formula: 'rolling_mean(A, 4)', hint: 'A = سری فصلی' },
+  { label: 'انحراف از میانگین', formula: 'zscore(A)', hint: 'A = هر سری' },
+  { label: 'نرمال‌سازی ۰-۱۰۰', formula: 'normalize(A)', hint: 'A = هر سری' },
+  { label: 'لگاریتم طبیعی', formula: 'log(A)', hint: 'A = هر سری مثبت' },
+  { label: 'تغییر مطلق', formula: 'diff(A, 1)', hint: 'A = هر سری' },
+  { label: 'نسبت دو شاخص', formula: 'A / B', hint: 'A، B = دو شاخص' },
+  { label: 'جمع دو شاخص', formula: 'A + B', hint: 'A، B = دو شاخص' },
+  { label: 'ضرب دو شاخص', formula: 'A * B', hint: 'A، B = دو شاخص' },
+  { label: 'مجموع تجمعی', formula: 'cumsum(A)', hint: 'A = هر سری' },
+  { label: 'انحراف معیار ۱۲م', formula: 'rolling_std(A, 12)', hint: 'A = سری ماهانه' },
+  { label: 'تغییر ۳ماهه %', formula: 'pct_change(A, 3)', hint: 'A = سری ماهانه' },
+]
+
+const SERIES_COLORS = ['#38bdf8', '#a78bfa', '#34d399', '#fb923c', '#f472b6', '#facc15']
+
+function MiniChart({ data, color }) {
+  if (!data?.length) return <div className="h-16 flex items-center justify-center text-xs text-slate-600">بدون داده</div>
+  return (
+    <div className="h-16">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data}>
+          <Area dataKey="value" stroke={color} fill={`${color}22`} dot={false} strokeWidth={1.5} />
+          <Tooltip formatter={(v) => formatPreciseNumber(v)} contentStyle={{ background: '#0f172a', border: 'none', fontSize: 11 }} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function LabPanel({ symbols, API_BASE, setMessage }) {
+  const [variables, setVariables] = useState([{ id: 'A', symbol: '', data: [] }, { id: 'B', symbol: '', data: [] }])
+  const [formula, setFormula] = useState('A / B * 100')
+  const [labResult, setLabResult] = useState([])
+  const [labSeries, setLabSeries] = useState({})
+  const [running, setRunning] = useState(false)
+  const [labRange, setLabRange] = useState('ALL')
+
+  const loadVarData = useCallback(async (varId, symbol) => {
+    if (!symbol) return
+    try {
+      const res = await axios.get(`${API_BASE}/data/${symbol}`)
+      const data = res.data?.data || []
+      setVariables((prev) => prev.map((v) => v.id === varId ? { ...v, data } : v))
+    } catch { /* ignore */ }
+  }, [API_BASE])
+
+  const changeSymbol = (varId, symbol) => {
+    setVariables((prev) => prev.map((v) => v.id === varId ? { ...v, symbol, data: [] } : v))
+    if (symbol) loadVarData(varId, symbol)
+  }
+
+  const addVariable = () => {
+    const nextId = String.fromCharCode(65 + variables.length)
+    setVariables((prev) => [...prev, { id: nextId, symbol: '', data: [] }])
+  }
+
+  const removeVariable = (varId) => setVariables((prev) => prev.filter((v) => v.id !== varId))
+
+  const applyTemplate = (tpl) => {
+    setFormula(tpl.formula)
+    setMessage(`قالب «${tpl.label}» انتخاب شد: ${tpl.hint}`)
+  }
+
+  const runCompute = async () => {
+    const payload = {}
+    for (const v of variables) {
+      if (!v.symbol) return setMessage('برای همه متغیرها نماد انتخاب کن.')
+      payload[v.id] = v.symbol
+    }
+    setRunning(true)
+    try {
+      const res = await axios.post(`${API_BASE}/data/lab/compute`, { formula, variables: payload })
+      setLabResult(res.data?.result || [])
+      setLabSeries(res.data?.series || {})
+      if (!res.data?.result?.length) setMessage('نتیجه‌ای تولید نشد — تاریخ‌های مشترک یافت نشد یا فرمول خطا دارد.')
+    } catch (err) {
+      setMessage(err?.response?.data?.detail || 'خطا در محاسبه فرمول.')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const resultInRange = useMemo(() => filterChartByRange(labResult, labRange), [labResult, labRange])
+
+  const resultStats = useMemo(() => {
+    const vals = resultInRange.map((d) => d.value).filter(Number.isFinite)
+    if (!vals.length) return null
+    return {
+      min: Math.min(...vals),
+      max: Math.max(...vals),
+      avg: vals.reduce((a, b) => a + b, 0) / vals.length,
+      last: vals[vals.length - 1],
+    }
+  }, [resultInRange])
+
+  const dataSymbols = useMemo(() => symbols.filter((s) => s.has_data), [symbols])
+
+  return (
+    <section className="space-y-4">
+      <h2 className="font-semibold flex items-center gap-2 text-lg"><FlaskConical size={18} className="text-purple-400" /> آزمایشگاه پیشرفته شاخص‌های اقتصادی</h2>
+
+      {/* Variables */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {variables.map((v, idx) => (
+          <div key={v.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-mono font-bold text-base" style={{ color: SERIES_COLORS[idx % SERIES_COLORS.length] }}>متغیر {v.id}</span>
+              {idx >= 2 && <button onClick={() => removeVariable(v.id)} className="text-xs text-red-400 hover:text-red-300">× حذف</button>}
+            </div>
+            <select
+              value={v.symbol}
+              onChange={(e) => changeSymbol(v.id, e.target.value)}
+              className="w-full bg-slate-950 rounded px-2 py-1.5 text-sm"
+            >
+              <option value="">انتخاب نماد...</option>
+              {dataSymbols.map((s) => <option key={s.id} value={s.symbol}>{s.symbol} — {s.name?.slice(0, 35)}</option>)}
+            </select>
+            <MiniChart data={v.data} color={SERIES_COLORS[idx % SERIES_COLORS.length]} />
+            {v.data.length > 0 && (
+              <div className="text-[10px] text-slate-500 flex justify-between">
+                <span>{v.data[0]?.date}</span>
+                <span>{v.data.length} رکورد</span>
+                <span>{v.data[v.data.length - 1]?.date}</span>
+              </div>
+            )}
+          </div>
+        ))}
+        {variables.length < 6 && (
+          <button onClick={addVariable} className="border-2 border-dashed border-slate-700 rounded-xl p-3 text-slate-500 hover:border-slate-500 hover:text-slate-400 text-sm">
+            + افزودن متغیر
+          </button>
+        )}
+      </div>
+
+      {/* Formula templates */}
+      <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3 space-y-2">
+        <div className="text-xs text-slate-400 font-medium">قالب‌های آماده:</div>
+        <div className="flex flex-wrap gap-1.5">
+          {FORMULA_TEMPLATES.map((tpl) => (
+            <button
+              key={tpl.label}
+              onClick={() => applyTemplate(tpl)}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-300 hover:text-white transition-colors"
+              title={tpl.hint}
+            >
+              {tpl.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Formula input */}
+      <div className="flex gap-2">
+        <div className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 flex items-center gap-2">
+          <span className="text-slate-500 text-sm font-mono">f =</span>
+          <input
+            value={formula}
+            onChange={(e) => setFormula(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && runCompute()}
+            className="flex-1 bg-transparent font-mono text-sm outline-none text-purple-300"
+            placeholder="مثال: A / B * 100 یا pct_change(A, 12)"
+          />
+        </div>
+        <button
+          onClick={runCompute}
+          disabled={running}
+          className="px-5 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded-xl font-semibold"
+        >
+          {running ? '...' : 'محاسبه'}
+        </button>
+      </div>
+
+      <div className="text-xs text-slate-500">
+        توابع: <span className="text-slate-400 font-mono">lag(A,n)  pct_change(A,n)  rolling_mean(A,n)  rolling_std(A,n)  normalize(A)  zscore(A)  diff(A,n)  cumsum(A)  log(A)  abs(A)</span>
+      </div>
+
+      {/* Result chart */}
+      {(labResult.length > 0 || Object.keys(labSeries).length > 0) && (
+        <div className="space-y-3">
+          {/* Input series side by side */}
+          {Object.keys(labSeries).length > 0 && (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {Object.entries(labSeries).map(([varId, data], idx) => {
+                const sym = variables.find((v) => v.id === varId)?.symbol || varId
+                return (
+                  <div key={varId} className="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+                    <div className="text-xs font-mono mb-1" style={{ color: SERIES_COLORS[idx % SERIES_COLORS.length] }}>
+                      {varId} = {sym}
+                    </div>
+                    <MiniChart data={data} color={SERIES_COLORS[idx % SERIES_COLORS.length]} />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Result */}
+          <div className="bg-slate-900 border border-purple-900/40 rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-purple-300">نتیجه:</span>
+                <code className="text-xs font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">{formula}</code>
+              </div>
+              <div className="flex items-center gap-1">
+                {CHART_RANGES.map((r) => (
+                  <button key={r.key} onClick={() => setLabRange(r.key)} className={`px-2 py-1 rounded text-xs ${labRange === r.key ? 'bg-purple-700' : 'bg-slate-800'}`}>{r.label}</button>
+                ))}
+              </div>
+            </div>
+
+            {resultStats && (
+              <div className="grid grid-cols-4 gap-2 text-xs text-center">
+                {[['آخرین', resultStats.last], ['میانگین', resultStats.avg], ['کمینه', resultStats.min], ['بیشینه', resultStats.max]].map(([label, val]) => (
+                  <div key={label} className="bg-slate-800 rounded-lg py-1.5">
+                    <div className="text-slate-500">{label}</div>
+                    <div className="text-slate-200 font-mono">{formatPreciseNumber(val)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={resultInRange}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="date" stroke="#475569" tick={{ fontSize: 10 }} />
+                  <YAxis stroke="#475569" tickFormatter={formatCompactNumber} width={52} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(v) => formatPreciseNumber(v)} contentStyle={{ background: '#0f172a', border: '1px solid #334155' }} />
+                  {resultStats?.avg != null && <ReferenceLine y={resultStats.avg} stroke="#a78bfa55" strokeDasharray="4 4" label={{ value: 'میانگین', fill: '#a78bfa', fontSize: 10 }} />}
+                  <Area dataKey="value" stroke="#c084fc" fill="#c084fc22" dot={false} strokeWidth={2} />
+                  <Line type="monotone" dataKey="value" stroke="#e879f9" dot={false} strokeWidth={1.5} />
+                  <Brush dataKey="date" height={20} stroke="#7e22ce" travellerWidth={8} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="text-xs text-slate-500 text-left">{resultInRange.length} نقطه داده</div>
+          </div>
+        </div>
+      )}
+
+      {labResult.length === 0 && Object.keys(labSeries).length === 0 && (
+        <div className="h-40 bg-slate-900/40 border border-dashed border-slate-700 rounded-xl flex items-center justify-center text-slate-500 text-sm">
+          متغیرها را انتخاب کن، فرمول بنویس و «محاسبه» را بزن
+        </div>
+      )}
+    </section>
   )
 }
 

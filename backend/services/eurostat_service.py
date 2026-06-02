@@ -53,13 +53,20 @@ async def auto_discover_eurostat(session: AsyncSession):
 
     records_to_insert = []
     
-    # اگر کاتالوگ با موفقیت دریافت شد
-    if response_json and "data" in response_json:
+    # اگر کاتالوگ با موفقیت دریافت شد (سازگار با SDMX-JSON 1.0 و 2.0)
+    if response_json:
         try:
-            dataflows = response_json["data"].get("dataflows", [])
+            dataflows = (
+                response_json.get("data", {}).get("dataflows")
+                or response_json.get("data", {}).get("Dataflows")
+                or response_json.get("Structures", {}).get("Dataflows")
+                or response_json.get("Structures", {}).get("dataflows")
+                or []
+            )
             for flow in dataflows:
                 flow_id = (flow.get("id") or "").upper().strip()
-                name = flow.get("name") or flow_id
+                raw_name = flow.get("name") or flow.get("names", {})
+                name = (raw_name.get("en") if isinstance(raw_name, dict) else raw_name) or flow_id
                 if flow_id:
                     records_to_insert.append({
                         "symbol": f"EUROSTAT_{flow_id}"[:50],
