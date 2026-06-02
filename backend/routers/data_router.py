@@ -1,6 +1,8 @@
+import math
 from datetime import date
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -586,6 +588,126 @@ async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Dep
             continue
 
     return combined_data
+
+
+class ComputeRequest(BaseModel):
+    formula: str
+    variables: Dict[str, str]
+
+
+async def _load_series(db: AsyncSession, symbol: str) -> Dict[date, float]:
+    sym = symbol.upper()
+    ind_res = await db.execute(select(Indicator).where(Indicator.symbol == sym))
+    ind = ind_res.scalar_one_or_none()
+    if not ind:
+        raise HTTPException(status_code=404, detail=f"نماد {sym} یافت نشد.")
+
+    data_res = await db.execute(
+        select(EconomicData).where(EconomicData.indicator_id == ind.id).order_by(EconomicData.date.asc())
+    )
+    records = data_res.scalars().all()
+
+    if not records:
+        market_res = await db.execute(
+            select(AssetMarketData).where(AssetMarketData.symbol == sym).order_by(AssetMarketData.date.asc())
+        )
+        market_records = market_res.scalars().all()
+        return {r.date: r.close_price for r in market_records}
+
+    return {r.date: r.value for r in records}
+
+
+@router.post("/lab/compute")
+async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = Depends(get_db)):
+    """
+    محاسبه فرمول پیشرفته روی سری‌های زمانی با پشتیبانی از توابع:
+    lag(A, n), pct_change(A, n), rolling_mean(A, n), rolling_std(A, n),
+    normalize(A), zscore(A), diff(A, n), log(A), exp(A), abs(A), cumsum(A)
+    """
+    raw: Dict[str, Dict[date, float]] = {}
+    for var_name, symbol in request.variables.items():
+        raw[var_name] = await _load_series(db, symbol)
+
+    if not raw:
+        return {"result": [], "series": {}}
+
+    df = pd.DataFrame(raw)
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index().dropna(how="all")
+
+    _math = {k: getattr(math, k) for k in dir(math) if not k.startswith("__")}
+
+    def _lag(s: pd.Series, n: int = 1) -> pd.Series:
+        return s.shift(n)
+
+    def _pct_change(s: pd.Series, n: int = 1) -> pd.Series:
+        return s.pct_change(periods=n) * 100
+
+    def _rolling_mean(s: pd.Series, n: int = 12) -> pd.Series:
+        return s.rolling(window=n, min_periods=1).mean()
+
+    def _rolling_std(s: pd.Series, n: int = 12) -> pd.Series:
+        return s.rolling(window=n, min_periods=2).std()
+
+    def _normalize(s: pd.Series) -> pd.Series:
+        mn, mx = s.min(), s.max()
+        return (s - mn) / (mx - mn) * 100 if mx != mn else s * 0
+
+    def _zscore(s: pd.Series) -> pd.Series:
+        std = s.std()
+        return (s - s.mean()) / std if std != 0 else s * 0
+
+    def _diff(s: pd.Series, n: int = 1) -> pd.Series:
+        return s.diff(n)
+
+    def _cumsum(s: pd.Series) -> pd.Series:
+        return s.cumsum()
+
+    env = {
+        **_math,
+        "lag": _lag,
+        "pct_change": _pct_change,
+        "rolling_mean": _rolling_mean,
+        "rolling_std": _rolling_std,
+        "normalize": _normalize,
+        "zscore": _zscore,
+        "diff": _diff,
+        "cumsum": _cumsum,
+        "log": lambda s: s.apply(lambda x: math.log(x) if x > 0 else float("nan")),
+        "exp": lambda s: s.apply(math.exp),
+        "abs": lambda s: s.abs(),
+    }
+
+    col_vars = {col: df[col] for col in df.columns if col in request.variables}
+    env.update(col_vars)
+
+    try:
+        result = eval(request.formula, {"__builtins__": {}}, env)  # noqa: S307
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"خطا در فرمول: {exc}") from exc
+
+    if isinstance(result, pd.Series):
+        result = result.dropna()
+        result_list = [
+            {"date": str(idx.date()), "value": round(float(v), 6)}
+            for idx, v in result.items()
+            if pd.notna(v) and not (isinstance(v, float) and math.isinf(v))
+        ]
+    elif isinstance(result, (int, float)):
+        result_list = [{"date": str(df.index[-1].date()), "value": round(float(result), 6)}]
+    else:
+        result_list = []
+
+    series_out: Dict[str, List[Dict]] = {}
+    for var_name in request.variables:
+        if var_name in df.columns:
+            col = df[var_name].dropna()
+            series_out[var_name] = [
+                {"date": str(idx.date()), "value": round(float(v), 6)}
+                for idx, v in col.items()
+            ]
+
+    return {"result": result_list, "series": series_out}
 
 
 @router.get("/{symbol}")
