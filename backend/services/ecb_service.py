@@ -6,7 +6,7 @@ from datetime import datetime, date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from database.models import Indicator, AssetMarketData
+from database.models import Indicator, EconomicData
 
 # دیکشنری ترجمه نمادهای خوانای ما به کلیدهای پیچیده SDMX بانک مرکزی اروپا
 ECB_SDMX_KEYS = {
@@ -100,44 +100,45 @@ async def fetch_and_store_ecb_data(session: AsyncSession, symbol: str):
     csv_data = response.text
     reader = csv.DictReader(io.StringIO(csv_data))
     
+    # پیدا کردن indicator در دیتابیس
+    indicator_result = await session.execute(select(Indicator).where(Indicator.symbol == symbol))
+    indicator = indicator_result.scalar_one_or_none()
+    if not indicator:
+        return {"success": False, "message": "ابتدا باید این شاخص را توسط کاوشگر کشف کنید."}
+
     records_to_insert = []
     for row in reader:
         try:
             # ستون TIME_PERIOD تاریخ است و OBS_VALUE مقدار آن
             date_str = row.get('TIME_PERIOD')
             value_str = row.get('OBS_VALUE')
-            
+
             if not date_str or not value_str:
                 continue
-                
+
             # گاهی تاریخ‌ها ماهانه (2023-01) هستند، روز اول ماه در نظر می‌گیریم
             if len(date_str) == 7:
                 date_str += "-01"
-                
+
             date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-            close_price = float(value_str)
-            
+            value = float(value_str)
+
             records_to_insert.append({
-                "symbol": symbol,
+                "indicator_id": indicator.id,
                 "date": date_obj,
-                "close_price": close_price,
-                "volume": 0.0 # شاخص‌های کلان حجم ندارند
+                "value": value,
             })
         except Exception as e:
             continue
 
     if records_to_insert:
-        stmt = insert(AssetMarketData).values(records_to_insert)
-        stmt = stmt.on_conflict_do_nothing(index_elements=['symbol', 'date'])
+        stmt = insert(EconomicData).values(records_to_insert)
+        stmt = stmt.on_conflict_do_nothing(index_elements=['indicator_id', 'date'])
         result = await session.execute(stmt)
-        
-        # آپدیت تاریخ آخرین همگام‌سازی در جدول شناسنامه
-        indicator_result = await session.execute(select(Indicator).where(Indicator.symbol == symbol))
-        indicator = indicator_result.scalar_one_or_none()
-        if indicator:
-            indicator.last_updated = date.today()
-            session.add(indicator)
-            
+
+        indicator.last_updated = date.today()
+        session.add(indicator)
+
         await session.commit()
         
     return {

@@ -16,11 +16,15 @@ from services.dbnomics_service import auto_discover_all_central_banks, auto_disc
 from services.discovery_service import auto_discover_all_fred, discover_fred_category, seed_market_symbols
 from services.ecb_service import auto_discover_ecb, fetch_and_store_ecb_data
 from services.eurostat_service import auto_discover_eurostat
+from services.fao_service import auto_discover_fao, fetch_and_store_fao_data
 from services.fred_service import fetch_and_store_fred_series
+from services.ilo_service import auto_discover_ilo, fetch_and_store_ilo_data
 from services.imf_service import auto_discover_imf_indicators
 from services.market_service import fetch_and_store_market_data
 from services.oecd_service import auto_discover_oecd_indicators
 from services.scheduler_service import start_scheduler
+from services.treasury_service import auto_discover_treasury, fetch_and_store_treasury_data
+from services.un_service import auto_discover_un, fetch_and_store_un_data
 from services.worldbank_service import auto_discover_worldbank_indicators
 from sqlalchemy import text
 
@@ -67,6 +71,14 @@ async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
             await auto_discover_bis_indicators(db)
         if source in ["ALL", "EUROSTAT"]:
             await auto_discover_eurostat(db)
+        if source in ["ALL", "ILO"]:
+            await auto_discover_ilo(db)
+        if source in ["ALL", "TREASURY"]:
+            await auto_discover_treasury(db)
+        if source in ["ALL", "FAO"]:
+            await auto_discover_fao(db)
+        if source in ["ALL", "UN"]:
+            await auto_discover_un(db)
         print(f"عملیات کاوشگر برای {source} با موفقیت به پایان رسید!")
     except Exception as e:
         print(f"خطا در حین اجرای کاوشگر {source}: {e}")
@@ -207,3 +219,47 @@ async def trigger_dbnomics_discovery(bank_code: Optional[str] = None, db: AsyncS
 @app.post("/api/fetch/dbnomics/{symbol}")
 async def trigger_dbnomics_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
     return await fetch_and_store_dbnomics_data(session=db, symbol=symbol.upper())
+
+
+@app.post("/api/discover/ilo")
+async def trigger_ilo_discovery(db: AsyncSession = Depends(get_db)):
+    result = await auto_discover_ilo(db)
+    return {"success": True, "new_indicators": result}
+
+
+@app.post("/api/fetch/ilo/{symbol}")
+async def trigger_ilo_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
+    return await fetch_and_store_ilo_data(session=db, symbol=symbol.upper())
+
+
+@app.post("/api/discover/treasury")
+async def trigger_treasury_discovery(db: AsyncSession = Depends(get_db)):
+    result = await auto_discover_treasury(db)
+    return {"success": True, "new_indicators": result}
+
+
+@app.post("/api/fetch/treasury/{symbol}")
+async def trigger_treasury_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
+    return await fetch_and_store_treasury_data(session=db, symbol=symbol.upper())
+
+
+@app.post("/api/discover/fao")
+async def trigger_fao_discovery(db: AsyncSession = Depends(get_db)):
+    result = await auto_discover_fao(db)
+    return {"success": True, "new_indicators": result}
+
+
+@app.post("/api/fetch/fao/{symbol}")
+async def trigger_fao_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
+    return await fetch_and_store_fao_data(session=db, symbol=symbol.upper())
+
+
+@app.post("/api/discover/un")
+async def trigger_un_discovery(db: AsyncSession = Depends(get_db)):
+    result = await auto_discover_un(db)
+    return {"success": True, "new_indicators": result}
+
+
+@app.post("/api/fetch/un/{symbol}")
+async def trigger_un_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
+    return await fetch_and_store_un_data(session=db, symbol=symbol.upper())
