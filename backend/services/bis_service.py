@@ -37,7 +37,6 @@ async def auto_discover_bis_indicators(session: AsyncSession):
     records_to_insert = []
     
     # --- دیتابیس‌های حیاتی BIS به عنوان بک‌آپ ---
-    # اگر اینترنت قطع شد یا API ساختارش را عوض کرد، این هسته‌های اصلی حتماً ثبت می‌شوند
     core_bis_datasets = [
         {"id": "WS_CBPOL_POL", "name": "نرخ‌های بهره سیاست‌گذاری بانک‌های مرکزی (Policy Rates)"},
         {"id": "WS_XRU", "name": "نرخ‌های ارز رسمی (Exchange Rates)"},
@@ -45,6 +44,18 @@ async def auto_discover_bis_indicators(session: AsyncSession):
         {"id": "WS_SPP", "name": "شاخص قیمت املاک و مستغلات (Property Prices)"},
         {"id": "WS_LBS", "name": "آمار بانکداری محلی و جریان سرمایه (Locational Banking Stats)"},
         {"id": "WS_GLI", "name": "نقدینگی جهانی (Global Liquidity Indicators)"},
+        {"id": "WS_CBS", "name": "آمار بانکداری تلفیقی (Consolidated Banking Statistics)"},
+        {"id": "WS_DER", "name": "آمار مشتقات مالی OTC (Derivatives Statistics)"},
+        {"id": "WS_DSS", "name": "آمار اوراق بدهی (Debt Securities Statistics)"},
+        {"id": "WS_EER", "name": "نرخ ارز موثر واقعی (Effective Exchange Rates)"},
+        {"id": "WS_LONG_CPI", "name": "شاخص قیمت مصرف‌کننده بلندمدت (Long CPI)"},
+        {"id": "WS_OTC_DERIV2", "name": "آمار مشتقات OTC نیمه‌سال"},
+        {"id": "WS_TC", "name": "آمار گردشگری (Tourism Credits)"},
+        {"id": "WS_TOTAL_CREDIT", "name": "کل اعتبار (Total Credit)"},
+        {"id": "WS_CPP", "name": "شاخص قیمت کالاهای مصرفی (Consumer Property Prices)"},
+        {"id": "WS_DEBT_SEC2", "name": "آمار اوراق بدهی داخلی"},
+        {"id": "WS_EXRATES", "name": "نرخ‌های ارز مبادله‌ای (Exchange Rates)"},
+        {"id": "WS_CBPOL_D", "name": "نرخ‌های سیاستی بانک‌های مرکزی (Daily)"},
     ]
 
     # پردازش دیتای دریافتی از API (سازگار با SDMX-JSON 1.0 و 2.0)
@@ -92,8 +103,15 @@ async def auto_discover_bis_indicators(session: AsyncSession):
     result = await session.execute(stmt)
     await session.commit()
 
-    print(f"کاوشگر BIS تمام شد! {result.rowcount} مجموعه داده کلان از بانک مرکزیِ بانک‌ها ثبت شد.")
-    return result.rowcount
+    new_count = result.rowcount
+    # گزارش تعداد کل شاخص‌های BIS در دیتابیس (نه فقط تازه‌واردها)
+    from sqlalchemy import func, select as sa_select
+    total_result = await session.execute(
+        sa_select(func.count()).where(Indicator.source == "BIS")
+    )
+    total_count = total_result.scalar() or 0
+    print(f"کاوشگر BIS تمام شد! {new_count} شاخص جدید + {total_count} شاخص موجود در دیتابیس.")
+    return new_count
 
 async def fetch_and_store_bis_data(session: AsyncSession, symbol: str):
     """
