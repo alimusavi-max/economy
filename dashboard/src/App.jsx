@@ -1618,10 +1618,19 @@ function LoginView({ users, loginUserId, setLoginUserId, login, newUsername, set
           </h1>
           <p className="text-slate-500 text-sm">جمع‌آوری و تحلیل داده از ۱۴ منبع بین‌المللی</p>
           <div className="flex items-center justify-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${backendOk === false ? 'bg-rose-500' : 'bg-emerald-400'}`} />
+            <span className={`w-2 h-2 rounded-full ${backendOk === false ? 'bg-rose-500' : 'bg-emerald-400 animate-pulse'}`} />
             <span className={`text-xs ${backendOk === false ? 'text-rose-400' : 'text-emerald-400'}`}>
               {backendOk === false ? 'سرور در دسترس نیست' : 'سرور آماده است'}
             </span>
+          </div>
+          <div className="flex flex-wrap justify-center gap-1.5 max-w-lg mx-auto">
+            {SOURCE_CONFIGS.map(s => (
+              <span key={s.key}
+                className="text-[10px] px-2 py-0.5 rounded-full font-mono"
+                style={{ background: s.color + '22', color: s.color, border: `1px solid ${s.color}44` }}>
+                {s.label}
+              </span>
+            ))}
           </div>
         </div>
 
