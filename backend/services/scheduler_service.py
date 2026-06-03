@@ -76,8 +76,33 @@ async def check_and_update_stale_data():
             await asyncio.sleep(2)
 
 
+async def check_high_frequency_data():
+    """آپدیت سریع داده‌های روزانه (Yahoo/ALPHAVANTAGE) در طول روز."""
+    print(f"[{date.today()}] بررسی دوره‌ای داده‌های با فرکانس بالا (روزانه)...")
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Indicator).where(Indicator.source.in_(["YAHOO", "ALPHAVANTAGE"]))
+        )
+        indicators = result.scalars().all()
+        today = date.today()
+        for ind in indicators:
+            if ind.last_updated is not None and (today - ind.last_updated).days < ind.update_interval_days:
+                continue
+            try:
+                if ind.source == "YAHOO":
+                    await fetch_and_store_market_data(session, ind.symbol)
+                elif ind.source == "ALPHAVANTAGE":
+                    await fetch_and_store_alphavantage(session, ind.symbol)
+            except Exception as e:
+                print(f"خطا در آپدیت سریع {ind.symbol}: {e}")
+            await asyncio.sleep(1)
+
+
 def start_scheduler():
     scheduler = AsyncIOScheduler()
     scheduler.add_job(check_and_update_stale_data, trigger='cron', hour=2, minute=0)
+    scheduler.add_job(check_high_frequency_data, trigger='cron', hour=9, minute=0)
+    scheduler.add_job(check_high_frequency_data, trigger='cron', hour=15, minute=0)
+    scheduler.add_job(check_high_frequency_data, trigger='cron', hour=21, minute=0)
     scheduler.start()
-    print("سیستم زمان‌بندی (Scheduler) با موفقیت راه‌اندازی شد.")
+    print("سیستم زمان‌بندی (Scheduler) با موفقیت راه‌اندازی شد (۴ وظیفه زمان‌بندی شده).")
