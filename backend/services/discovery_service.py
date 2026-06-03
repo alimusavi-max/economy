@@ -39,7 +39,7 @@ async def seed_market_symbols(session: AsyncSession):
     # ۱. استخراج اتوماتیک ۵۰۰ شرکت برتر بورس آمریکا (S&P 500)
     try:
         # با یک خط کد، تمام جداول صفحه ویکی‌پدیا را می‌خوانیم!
-        tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+        tables = await asyncio.to_thread(pd.read_html, 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
         sp500_df = tables[0]
         
         for index, row in sp500_df.iterrows():

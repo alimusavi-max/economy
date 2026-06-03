@@ -108,7 +108,7 @@ async def fetch_and_store_dbnomics_data(session: AsyncSession, symbol: str):
                 success = True
                 break
             await asyncio.sleep(2)
-        except:
+        except Exception:
             await asyncio.sleep(4)
             
     if not success:
@@ -150,7 +150,7 @@ async def fetch_and_store_dbnomics_data(session: AsyncSession, symbol: str):
                     "date": d,
                     "value": float(v)
                 })
-            except:
+            except Exception:
                 continue
     except Exception as e:
         return {"success": False, "message": "خطا در پردازش دیتای بانک."}

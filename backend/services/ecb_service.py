@@ -141,18 +141,21 @@ async def fetch_and_store_ecb_data(session: AsyncSession, symbol: str):
         except Exception as e:
             continue
 
-    if records_to_insert:
-        stmt = insert(EconomicData).values(records_to_insert)
+    inserted_count = 0
+    batch_size = 3000
+    for i in range(0, len(records_to_insert), batch_size):
+        batch = records_to_insert[i:i + batch_size]
+        stmt = insert(EconomicData).values(batch)
         stmt = stmt.on_conflict_do_nothing(index_elements=['indicator_id', 'date'])
-        result = await session.execute(stmt)
+        res = await session.execute(stmt)
+        inserted_count += res.rowcount
 
-        indicator.last_updated = date.today()
-        session.add(indicator)
+    indicator.last_updated = date.today()
+    session.add(indicator)
+    await session.commit()
 
-        await session.commit()
-        
     return {
-        "success": True, 
+        "success": True,
         "message": f"دیتای {symbol} از ECB ذخیره شد.",
-        "new_records": len(records_to_insert)
+        "new_records": inserted_count
     }
