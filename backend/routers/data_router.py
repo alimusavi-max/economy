@@ -974,6 +974,45 @@ async def update_symbol_tags(symbol: str, request: TagsRequest, db: AsyncSession
     return {"success": True, "symbol": indicator.symbol, "tags": indicator.tags}
 
 
+@router.get("/export/multi.csv")
+async def export_multi_csv(
+    symbols: str = Query(description="کاما-جدا نمادها مثل FEDFUNDS,UNRATE"),
+    db: AsyncSession = Depends(get_db),
+):
+    """خروجی CSV گسترده برای چندین شاخص با ستون‌های جداگانه."""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()][:20]
+    if not sym_list:
+        raise HTTPException(status_code=400, detail="حداقل یک نماد مشخص کنید.")
+
+    series_data: Dict[str, Dict[date, float]] = {}
+    for sym in sym_list:
+        result = await db.execute(select(Indicator).where(Indicator.symbol == sym))
+        indicator = result.scalar_one_or_none()
+        if not indicator:
+            continue
+        data_res = await db.execute(
+            select(EconomicData).where(EconomicData.indicator_id == indicator.id).order_by(EconomicData.date.asc())
+        )
+        series_data[sym] = {r.date: r.value for r in data_res.scalars().all()}
+
+    all_dates = sorted(set(d for s in series_data.values() for d in s))
+    header = ["date"] + list(series_data.keys())
+    lines = [",".join(header)]
+    for d in all_dates:
+        row_vals = [str(d)] + [str(series_data[sym].get(d, "")) for sym in series_data]
+        lines.append(",".join(row_vals))
+
+    content = "\n".join(lines)
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="export.csv"'},
+    )
+
+
 @router.get("/{symbol}/export.csv")
 async def export_symbol_csv(symbol: str, db: AsyncSession = Depends(get_db)):
     """خروجی CSV برای یک شاخص."""

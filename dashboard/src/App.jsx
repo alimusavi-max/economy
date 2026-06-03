@@ -1026,6 +1026,13 @@ export default function App() {
                 className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 rounded-lg text-xs flex items-center gap-1 transition-colors">
                 <Download size={11} /> خروجی CSV
               </button>
+              {selectedSymbols.length > 1 && (
+                <a href={`${API_BASE}/data/export/multi.csv?symbols=${selectedSymbols.join(',')}`}
+                  download="export.csv"
+                  className="px-3 py-1.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-xs flex items-center gap-1 transition-colors">
+                  <Download size={11} /> خروجی یکجا ({selectedSymbols.length})
+                </a>
+              )}
               <button onClick={loadDashboard}
                 className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-xs mr-auto transition-colors">
                 اعمال فیلتر
@@ -1078,7 +1085,8 @@ export default function App() {
                             const c = { healthy: '#34d399', due_soon: '#fb923c', stale: '#f43f5e', never_updated: '#a78bfa' }[fst]
                             return c ? <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} title={fst} /> : null
                           })()}
-                          {row.symbol}
+                          <span onClick={() => { navigator.clipboard?.writeText(row.symbol); setMessage(`${row.symbol} کپی شد`, 'info') }}
+                            className="cursor-pointer hover:text-cyan-300 transition-colors" title="کلیک برای کپی">{row.symbol}</span>
                         </div>
                       </td>
                       <td className="p-2.5 text-slate-300 max-w-[180px] text-xs">
