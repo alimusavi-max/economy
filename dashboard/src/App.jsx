@@ -155,18 +155,33 @@ function StatCard({ title, value, Icon, color = '#38bdf8', sub }) {
   )
 }
 
-function MiniChart({ data, color }) {
+function MiniChart({ data, color, showStats }) {
   if (!data?.length) return (
     <div className="h-16 flex items-center justify-center text-xs text-slate-700">بدون داده</div>
   )
+  const last = data.at(-1)?.value
+  const first = data[0]?.value
+  const pctChange = first && first !== 0 ? ((last - first) / Math.abs(first)) * 100 : null
   return (
-    <div className="h-16">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data}>
-          <Area dataKey="value" stroke={color} fill={`${color}22`} dot={false} strokeWidth={1.5} />
-          <Tooltip formatter={fmtFull} contentStyle={{ background: '#0f172a', border: 'none', fontSize: 11 }} />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="space-y-0.5">
+      {showStats && last != null && (
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="text-slate-400 font-mono">{fmtFull(last)}</span>
+          {pctChange != null && (
+            <span className={pctChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+              {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(1)}%
+            </span>
+          )}
+        </div>
+      )}
+      <div className="h-14">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data}>
+            <Area dataKey="value" stroke={color} fill={`${color}22`} dot={false} strokeWidth={1.5} />
+            <Tooltip formatter={fmtFull} contentStyle={{ background: '#0f172a', border: 'none', fontSize: 11 }} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   )
 }
@@ -190,6 +205,7 @@ export default function App() {
   }, [])
 
   const [recentActivity, setRecentActivity] = useState([])
+  const [topSeries, setTopSeries] = useState([])
   const [activeTab, setActiveTab] = useState('dashboard')
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchQuery, setQuickSearchQuery] = useState('')
@@ -286,15 +302,17 @@ export default function App() {
       if (search.trim()) params.search = search.trim()
       if (withDataOnly) params.with_data_only = true
 
-      const [sumR, fresR, symR, actR] = await Promise.allSettled([
+      const [sumR, fresR, symR, actR, topR] = await Promise.allSettled([
         axios.get(`${API_BASE}/data/summary`),
         axios.get(`${API_BASE}/data/freshness`),
         axios.get(`${API_BASE}/data/symbols/available`, { params }),
         axios.get(`${API_BASE}/data/recent-activity`, { params: { limit: 8 } }),
+        axios.get(`${API_BASE}/data/top-series`, { params: { limit: 6 } }),
       ])
       if (sumR.status === 'fulfilled') setSummary(sumR.value.data)
       if (fresR.status === 'fulfilled') setFreshness(fresR.value.data)
       if (actR.status === 'fulfilled') setRecentActivity(actR.value.data || [])
+      if (topR.status === 'fulfilled') setTopSeries(topR.value.data || [])
       if (symR.status === 'fulfilled') {
         setSymbols(symR.value.data?.items || [])
         setSymbolsTotal(symR.value.data?.pagination?.total || 0)
@@ -810,6 +828,34 @@ export default function App() {
                       </div>
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Top series by data volume */}
+            {topSeries.length > 0 && (
+              <div className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4">
+                <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
+                  <TrendingUp size={14} className="text-emerald-400" /> پُرداده‌ترین شاخص‌ها
+                </h3>
+                <div className="space-y-1.5">
+                  {topSeries.map((item, i) => {
+                    const max = topSeries[0]?.data_points_count || 1
+                    const pct = Math.round((item.data_points_count / max) * 100)
+                    const color = SOURCE_COLOR_MAP[item.source] || '#64748b'
+                    return (
+                      <button key={item.symbol} onClick={() => openExpanded(item.symbol)}
+                        className="w-full flex items-center gap-3 text-xs hover:bg-slate-800/50 rounded-lg px-2 py-1.5 transition-colors">
+                        <span className="text-slate-600 w-4 shrink-0">{i + 1}</span>
+                        <SourceBadge source={item.source} />
+                        <span className="font-mono text-cyan-300 shrink-0 w-28 truncate text-right">{item.symbol}</span>
+                        <div className="flex-1 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+                        </div>
+                        <span className="text-emerald-400 shrink-0 w-16 text-left">{fmt(item.data_points_count)}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -1438,7 +1484,7 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
                 <span className="text-xs text-rose-500">{v.error}</span>
               </div>
             ) : (
-              <MiniChart data={v.data} color={SERIES_COLORS[i % SERIES_COLORS.length]} />
+              <MiniChart data={v.data} color={SERIES_COLORS[i % SERIES_COLORS.length]} showStats />
             )}
             {!v.loading && !v.error && v.data.length > 0 && (
               <div className="text-[10px] text-slate-600 flex justify-between">
@@ -1510,7 +1556,7 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
                     <div className="text-xs font-mono mb-1" style={{ color: SERIES_COLORS[i % SERIES_COLORS.length] }}>
                       {varId} = {sym}
                     </div>
-                    <MiniChart data={data} color={SERIES_COLORS[i % SERIES_COLORS.length]} />
+                    <MiniChart data={data} color={SERIES_COLORS[i % SERIES_COLORS.length]} showStats />
                   </div>
                 )
               })}

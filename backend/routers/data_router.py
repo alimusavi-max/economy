@@ -83,6 +83,35 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/top-series")
+async def get_top_series(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=10, ge=1, le=50),
+    source: Optional[str] = Query(default=None),
+):
+    """بیشترین رکوردها در هر شاخص."""
+    q = (
+        select(
+            Indicator.symbol,
+            Indicator.name,
+            Indicator.source,
+            func.count(EconomicData.id).label("data_points_count"),
+        )
+        .select_from(Indicator)
+        .join(EconomicData, EconomicData.indicator_id == Indicator.id)
+        .group_by(Indicator.id, Indicator.symbol, Indicator.name, Indicator.source)
+        .order_by(func.count(EconomicData.id).desc())
+        .limit(limit)
+    )
+    if source:
+        q = q.where(Indicator.source == source.upper())
+    rows = (await db.execute(q)).all()
+    return [
+        {"symbol": r.symbol, "name": r.name, "source": r.source, "data_points_count": int(r.data_points_count)}
+        for r in rows
+    ]
+
+
 @router.get("/recent-activity")
 async def get_recent_activity(
     db: AsyncSession = Depends(get_db),
