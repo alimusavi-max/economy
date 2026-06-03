@@ -1895,10 +1895,17 @@ function SourcesPanel({ summary, freshness, runPipeline, setMessage }) {
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">{total} شاخص</span>
-                  <span style={{ color: withData > 0 ? cfg.color : '#475569' }}>{withData} دارای داده</span>
+                  <div className="flex items-center gap-2">
+                    {s?.data_points > 0 && <span className="text-[10px] text-slate-600">{fmt(s.data_points)} رکورد</span>}
+                    <span style={{ color: withData > 0 ? cfg.color : '#475569' }}>{cov}%</span>
+                  </div>
                 </div>
                 <div className="bg-slate-800 rounded-full h-1.5">
                   <div className="h-full rounded-full transition-all" style={{ width: `${cov}%`, background: cfg.color }} />
+                </div>
+                <div className="flex justify-between text-[10px] text-slate-700">
+                  <span>{withData} دارای داده</span>
+                  {total - withData > 0 && <span>{total - withData} خالی</span>}
                 </div>
               </div>
 
