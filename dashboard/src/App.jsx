@@ -183,6 +183,8 @@ export default function App() {
   }, [])
 
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [quickSearchOpen, setQuickSearchOpen] = useState(false)
+  const [quickSearchQuery, setQuickSearchQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [dbnomicsProviderFilter, setDbnomicsProviderFilter] = useState('')
   const [dbnomicsProviderSearch, setDbnomicsProviderSearch] = useState('')
@@ -312,7 +314,13 @@ export default function App() {
   }, [_msg])
   useEffect(() => {
     const h = (e) => {
-      if (e.key === 'Escape') { setExpandedOpen(false); return }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault(); setQuickSearchOpen(v => !v); setQuickSearchQuery(''); return
+      }
+      if (e.key === 'Escape') {
+        if (quickSearchOpen) { setQuickSearchOpen(false); return }
+        setExpandedOpen(false); return
+      }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return
       if (e.key === 'd') setActiveTab('dashboard')
       if (e.key === 's') setActiveTab('sources')
@@ -321,7 +329,7 @@ export default function App() {
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [setActiveTab])
+  }, [setActiveTab, quickSearchOpen])
 
   const debounceRef = useRef(null)
   const handleSearch = useCallback((val) => {
@@ -497,6 +505,11 @@ export default function App() {
             </div>
           </div>
           <div className="flex gap-1.5 flex-wrap items-center">
+            <button onClick={() => { setQuickSearchOpen(true); setQuickSearchQuery('') }}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs flex items-center gap-1.5 transition-colors">
+              <Search size={12} /> <span className="hidden sm:inline">جستجو</span>
+              <kbd className="text-[10px] text-slate-500 bg-slate-700 px-1 rounded">⌘K</kbd>
+            </button>
             <button onClick={loadDashboard}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs flex items-center gap-1.5 transition-colors">
               <RefreshCcw size={12} className={loading ? 'animate-spin' : ''} /> رفرش
@@ -1016,6 +1029,53 @@ export default function App() {
                   <Brush dataKey="date" height={20} stroke="#22d3ee22" travellerWidth={6} />
                 </ComposedChart>
               </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quick Search (Ctrl+K) ── */}
+      {quickSearchOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-start justify-center pt-24 px-4" dir="rtl"
+          onClick={() => setQuickSearchOpen(false)}>
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800">
+              <Search size={16} className="text-slate-500 shrink-0" />
+              <input autoFocus value={quickSearchQuery} onChange={e => setQuickSearchQuery(e.target.value)}
+                placeholder="جستجوی سریع نماد یا نام..." dir="rtl"
+                className="flex-1 bg-transparent text-sm outline-none placeholder-slate-600" />
+              <kbd className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">ESC</kbd>
+            </div>
+            <div className="max-h-72 overflow-y-auto">
+              {symbols
+                .filter(s => {
+                  const q = quickSearchQuery.toLowerCase()
+                  return !q || s.symbol.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q)
+                })
+                .slice(0, 12)
+                .map(s => (
+                  <button key={s.id} onClick={() => { openExpanded(s.symbol); setQuickSearchOpen(false) }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors text-right">
+                    <SourceBadge source={s.source} />
+                    <span className="font-mono text-xs text-cyan-300 shrink-0">{s.symbol}</span>
+                    <span className="text-xs text-slate-400 truncate flex-1">{s.name}</span>
+                    {s.has_data && <span className="text-[10px] text-emerald-500 shrink-0">{fmt(s.data_points_count)} رکورد</span>}
+                  </button>
+                ))}
+              {quickSearchQuery && symbols.filter(s => {
+                const q = quickSearchQuery.toLowerCase()
+                return s.symbol.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q)
+              }).length === 0 && (
+                <div className="py-8 text-center text-slate-700 text-sm">نتیجه‌ای پیدا نشد</div>
+              )}
+              {!quickSearchQuery && symbols.length === 0 && (
+                <div className="py-8 text-center text-slate-700 text-sm">شاخصی در پایگاه داده نیست</div>
+              )}
+            </div>
+            <div className="px-4 py-2 border-t border-slate-800 flex items-center justify-between">
+              <span className="text-[10px] text-slate-700">↵ برای باز کردن نمودار</span>
+              <span className="text-[10px] text-slate-700">⌘K برای باز/بستن</span>
             </div>
           </div>
         </div>
