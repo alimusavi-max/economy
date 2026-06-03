@@ -119,6 +119,16 @@ async def root():
     return {"message": "موتور تحلیل اقتصاد جهانی روشن است 🚀"}
 
 
+@app.get("/api/health")
+async def health_check():
+    from datetime import datetime
+    return {
+        "status": "healthy",
+        "database": engine is not None,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 @app.post("/api/fetch/fred/{series_id}")
 async def trigger_fred_fetch(
     series_id: str,
