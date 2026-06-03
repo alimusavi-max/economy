@@ -263,3 +263,17 @@ async def trigger_un_discovery(db: AsyncSession = Depends(get_db)):
 @app.post("/api/fetch/un/{symbol}")
 async def trigger_un_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
     return await fetch_and_store_un_data(session=db, symbol=symbol.upper())
+
+
+@app.post("/api/discover/bis")
+async def trigger_bis_discovery(db: AsyncSession = Depends(get_db)):
+    from services.bis_service import auto_discover_bis_indicators
+    result = await auto_discover_bis_indicators(db)
+    return {"success": True, "new_indicators": result}
+
+
+@app.post("/api/discover/eurostat")
+async def trigger_eurostat_discovery(db: AsyncSession = Depends(get_db)):
+    from services.eurostat_service import auto_discover_eurostat
+    result = await auto_discover_eurostat(db)
+    return {"success": True, "new_indicators": result}

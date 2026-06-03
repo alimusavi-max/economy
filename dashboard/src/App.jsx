@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import {
   Area,
@@ -176,19 +176,23 @@ export default function App() {
       params.sort_by = sortBy
       params.sort_dir = sortDir
 
-      const [summaryRes, freshnessRes, symbolsRes] = await Promise.all([
+      const [summaryRes, freshnessRes, symbolsRes] = await Promise.allSettled([
         axios.get(`${API_BASE}/data/summary`),
         axios.get(`${API_BASE}/data/freshness`),
         axios.get(`${API_BASE}/data/symbols/available`, { params })
       ])
 
-      setSummary(summaryRes.data)
-      setFreshness(freshnessRes.data)
-      setSymbols(symbolsRes.data?.items || [])
+      if (summaryRes.status === 'fulfilled') setSummary(summaryRes.value.data)
+      if (freshnessRes.status === 'fulfilled') setFreshness(freshnessRes.value.data)
+      if (symbolsRes.status === 'fulfilled') {
+        setSymbols(symbolsRes.value.data?.items || [])
+        setSymbolsTotal(symbolsRes.value.data?.pagination?.total || 0)
+        setSymbolsTotalPages(symbolsRes.value.data?.pagination?.total_pages || 1)
+      } else {
+        setSymbols([])
+      }
       setSelectedSymbols([])
-      setSymbolsTotal(symbolsRes.data?.pagination?.total || 0)
-      setSymbolsTotalPages(symbolsRes.data?.pagination?.total_pages || 1)
-      setBackendConnected(true)
+      setBackendConnected(symbolsRes.status === 'fulfilled')
       setMessage('')
     } catch (err) {
       setBackendConnected(false)
@@ -227,6 +231,22 @@ export default function App() {
   useEffect(() => { Promise.all([loadUsers(), loadDashboard()]).catch(() => null) }, [loadDashboard, loadUsers])
   useEffect(() => { if (sourceFilter === 'DBNOMICS') loadDbnomicsProviders().catch(() => null); else { setDbnomicsProviderFilter(''); setDbnomicsProviders([]) } }, [loadDbnomicsProviders, sourceFilter])
   useEffect(() => { if (selectedUserId) loadUserDashboard(selectedUserId) }, [loadUserDashboard, selectedUserId])
+
+  // auto-clear پیام‌های موفقیت/خطا بعد از ۵ ثانیه
+  useEffect(() => {
+    if (!message) return
+    const t = setTimeout(() => setMessage(''), 5000)
+    return () => clearTimeout(t)
+  }, [message])
+
+  // debounce جستجو — فقط بعد از ۳۵۰ms بی‌حرکتی کاربر، لود مجدد انجام می‌شود
+  const searchDebounceRef = useRef(null)
+  const handleSearchChange = useCallback((val) => {
+    setSearch(val)
+    setSymbolsPage(1)
+    clearTimeout(searchDebounceRef.current)
+    searchDebounceRef.current = setTimeout(() => loadDashboard(), 350)
+  }, [loadDashboard])
 
   const persistDashboardSymbols = useCallback(async (nextSymbols, successMessage) => {
     if (!selectedUserId) return setMessage('ابتدا وارد حساب کاربری خودت شو.')
@@ -461,7 +481,7 @@ export default function App() {
         {activeTab === 'manage' && (
           <section className="bg-slate-900/80 border border-slate-700 rounded-xl p-4 space-y-4">
             <div className="grid md:grid-cols-9 gap-3">
-              <label className="bg-slate-950 rounded-lg px-3 py-2 flex items-center gap-2"><Search size={16} /><input value={search} onChange={(e) => { setSearch(e.target.value); setSymbolsPage(1) }} placeholder="جستجو" className="bg-transparent w-full outline-none" /></label>
+              <label className="bg-slate-950 rounded-lg px-3 py-2 flex items-center gap-2"><Search size={16} /><input value={search} onChange={(e) => handleSearchChange(e.target.value)} placeholder="جستجو" className="bg-transparent w-full outline-none" /></label>
               <select value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setSymbolsPage(1) }} className="bg-slate-950 rounded-lg px-3 py-2"><option value="">همه منابع</option>{availableSources.map((s) => <option key={s} value={s}>{s}</option>)}</select>
               <input value={dbnomicsProviderSearch} onChange={(e) => setDbnomicsProviderSearch(e.target.value)} placeholder="جستجو زیرمنبع DBNOMICS" disabled={sourceFilter !== 'DBNOMICS'} className="bg-slate-950 rounded-lg px-3 py-2 disabled:opacity-50" />
               <select value={dbnomicsProviderFilter} onChange={(e) => { setDbnomicsProviderFilter(e.target.value); setSymbolsPage(1) }} disabled={sourceFilter !== 'DBNOMICS'} className="bg-slate-950 rounded-lg px-3 py-2 disabled:opacity-50">

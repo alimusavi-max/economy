@@ -545,7 +545,7 @@ async def combine_indicators_data(
             elif operation == "mul":
                 val = v1 * v2
             else:
-                val = v1 / v2 if v2 != 0 else 0
+                val = v1 / v2 if v2 != 0 else float("nan")
 
             combined_data.append({"date": str(d), "value": round(val, 4)})
         except Exception:
@@ -682,7 +682,22 @@ async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = D
     env.update(col_vars)
 
     try:
-        result = eval(request.formula, {"__builtins__": {}}, env)  # noqa: S307
+        import ast
+        tree = ast.parse(request.formula, mode="eval")
+        # whitelist: فقط عملگرهای ریاضی و نام‌های موجود در env مجاز هستند
+        ALLOWED_NODES = (
+            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name,
+            ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow,
+            ast.USub, ast.UAdd, ast.Mod, ast.Load, ast.keyword,
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, ALLOWED_NODES):
+                raise ValueError(f"عملگر غیرمجاز در فرمول: {type(node).__name__}")
+            if isinstance(node, ast.Name) and node.id not in env:
+                raise ValueError(f"متغیر یا تابع ناشناخته: '{node.id}'")
+        result = eval(compile(tree, "<formula>", "eval"), {"__builtins__": {}}, env)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"خطا در فرمول: {exc}") from exc
 
