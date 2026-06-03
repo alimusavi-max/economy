@@ -1145,14 +1145,31 @@ export default function App() {
               {loading && <div className="text-center py-10 text-slate-600 text-sm animate-pulse">در حال بارگذاری...</div>}
             </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-500">نمایش {symbols.length} از {symbolsTotal}</span>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">نمایش {symbols.length} از {symbolsTotal}</span>
+                {pinnedSymbols.length > 0 && (
+                  <span className="text-[10px] bg-amber-900/30 text-amber-400 px-2 py-0.5 rounded-full">
+                    {pinnedSymbols.length} پین‌شده
+                  </span>
+                )}
+                {tagFilter && (
+                  <button onClick={() => setTagFilter('')}
+                    className="text-[10px] bg-indigo-900/30 text-indigo-300 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-indigo-900/50 transition-colors">
+                    #{tagFilter} ✕
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-1">
+                <button disabled={symbolsPage <= 1} onClick={() => setSymbolsPage(1)}
+                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs disabled:opacity-40 transition-colors">⟪</button>
                 <button disabled={symbolsPage <= 1} onClick={() => setSymbolsPage(p => p - 1)}
                   className="px-3 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs disabled:opacity-40 transition-colors">«</button>
                 <span className="px-3 py-1 bg-slate-900 rounded-lg text-xs">{symbolsPage} / {symbolsTotalPages}</span>
                 <button disabled={symbolsPage >= symbolsTotalPages} onClick={() => setSymbolsPage(p => p + 1)}
                   className="px-3 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs disabled:opacity-40 transition-colors">»</button>
+                <button disabled={symbolsPage >= symbolsTotalPages} onClick={() => setSymbolsPage(symbolsTotalPages)}
+                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs disabled:opacity-40 transition-colors">⟫</button>
               </div>
             </div>
           </section>
