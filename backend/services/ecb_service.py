@@ -39,7 +39,7 @@ async def auto_discover_ecb(session: AsyncSession):
                 response_json = response.json()
                 break
             await asyncio.sleep(3)
-        except:
+        except Exception:
             await asyncio.sleep(5)
 
     records_to_insert = []
@@ -100,7 +100,7 @@ async def fetch_and_store_ecb_data(session: AsyncSession, symbol: str):
                 success = True
                 break
             await asyncio.sleep(3)
-        except:
+        except Exception:
             await asyncio.sleep(5)
 
     if not success:

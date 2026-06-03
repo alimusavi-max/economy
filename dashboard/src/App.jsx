@@ -311,10 +311,17 @@ export default function App() {
     return () => clearTimeout(t)
   }, [_msg])
   useEffect(() => {
-    const h = (e) => { if (e.key === 'Escape') setExpandedOpen(false) }
+    const h = (e) => {
+      if (e.key === 'Escape') { setExpandedOpen(false); return }
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return
+      if (e.key === 'd') setActiveTab('dashboard')
+      if (e.key === 's') setActiveTab('sources')
+      if (e.key === 'm') setActiveTab('manage')
+      if (e.key === 'l') setActiveTab('lab')
+    }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [])
+  }, [setActiveTab])
 
   const debounceRef = useRef(null)
   const handleSearch = useCallback((val) => {
@@ -433,10 +440,16 @@ export default function App() {
   const availableSources = useMemo(() => (summary?.sources || []).map(s => s.source), [summary])
 
   const expandedFiltered = useMemo(() => filterByRange(expandedData, expandedRange), [expandedData, expandedRange])
-  const expandedAvg = useMemo(() => {
+  const expandedStats = useMemo(() => {
     const vs = expandedFiltered.map(d => Number(d.value)).filter(Number.isFinite)
-    return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : null
+    if (!vs.length) return { avg: null, min: null, max: null }
+    return {
+      avg: vs.reduce((a, b) => a + b, 0) / vs.length,
+      min: Math.min(...vs),
+      max: Math.max(...vs),
+    }
   }, [expandedFiltered])
+  const expandedAvg = expandedStats.avg
 
   const mergedData = useMemo(() => {
     if (!expandedData2.length || !expandedSym2) return null
@@ -511,7 +524,8 @@ export default function App() {
         {_msg?.text && <Toast msg={_msg} onDismiss={() => _setMsg(null)} />}
 
         {/* ── Tabs ── */}
-        <nav className="flex gap-1 bg-slate-900/60 rounded-xl p-1 w-fit overflow-x-auto">
+        <nav className="flex items-center gap-2">
+        <div className="flex gap-1 bg-slate-900/60 rounded-xl p-1 overflow-x-auto">
           {[
             ['dashboard', 'داشبورد', null],
             ['sources', 'منابع', summary?.sources?.length],
@@ -529,6 +543,9 @@ export default function App() {
               )}
             </button>
           ))}
+        </div>
+        <span title="میانبر صفحه‌کلید: D داشبورد، S منابع، M مدیریت، L آزمایشگاه، ESC بستن پنجره"
+          className="text-slate-700 hover:text-slate-500 cursor-help text-xs hidden sm:block select-none">⌨</span>
         </nav>
 
         {/* ── Dashboard ── */}
@@ -583,12 +600,14 @@ export default function App() {
                     const inRange = filterByRange(chart.data, rangeKey)
                     const last = inRange.length ? inRange[inRange.length - 1].value : null
                     const delta = getDelta(inRange)
-                    const src = symbolMap[chart.symbol]?.source || ''
+                    const symInfo = symbolMap[chart.symbol]
+                    const src = symInfo?.source || ''
+                    const indName = symInfo?.name || ''
                     return (
                       <div key={chart.symbol} className="bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl p-3 transition-colors">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-semibold text-sm">{chart.symbol}</span>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono font-semibold text-sm shrink-0">{chart.symbol}</span>
                             {src && <SourceBadge source={src} />}
                           </div>
                           <div className="flex items-center gap-1.5 text-xs">
@@ -605,6 +624,9 @@ export default function App() {
                             ) : <span className="text-rose-400">{chart.error || 'بدون داده'}</span>}
                           </div>
                         </div>
+                        {indName && (
+                          <div className="text-[10px] text-slate-600 truncate mb-1.5" title={indName}>{indName}</div>
+                        )}
                         <div className="flex items-center gap-1 mb-2 flex-wrap">
                           {CHART_RANGES.map(r => (
                             <button key={r.key}
@@ -621,15 +643,20 @@ export default function App() {
                             className="px-2 py-0.5 bg-rose-800 hover:bg-rose-700 rounded text-[11px] transition-colors">×</button>
                         </div>
                         <div className="h-[190px]">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={inRange}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                              <XAxis dataKey="date" hide stroke="#475569" />
-                              <YAxis stroke="#475569" width={44} tickFormatter={fmt} tick={{ fontSize: 10 }} />
-                              <Tooltip formatter={fmtFull} contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', fontSize: 11 }} />
-                              <Area dataKey="value" stroke="#38bdf8" fill="#38bdf812" strokeWidth={1.5} dot={false} />
-                            </AreaChart>
-                          </ResponsiveContainer>
+                          {(() => {
+                            const clr = SOURCE_COLOR_MAP[src] || '#38bdf8'
+                            return (
+                              <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={inRange}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                  <XAxis dataKey="date" hide stroke="#475569" />
+                                  <YAxis stroke="#475569" width={44} tickFormatter={fmt} tick={{ fontSize: 10 }} />
+                                  <Tooltip formatter={fmtFull} contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', fontSize: 11 }} />
+                                  <Area dataKey="value" stroke={clr} fill={`${clr}18`} strokeWidth={1.5} dot={false} />
+                                </AreaChart>
+                              </ResponsiveContainer>
+                            )
+                          })()}
                         </div>
                       </div>
                     )
@@ -941,6 +968,8 @@ export default function App() {
                 <>
                   <span className="text-cyan-300">آخرین: {fmtFull(expandedFiltered[expandedFiltered.length - 1].value)}</span>
                   {expandedAvg != null && <span className="text-amber-400">میانگین: {fmtFull(expandedAvg)}</span>}
+                  {expandedStats.min != null && <span className="text-rose-400">کمینه: {fmtFull(expandedStats.min)}</span>}
+                  {expandedStats.max != null && <span className="text-emerald-400">بیشینه: {fmtFull(expandedStats.max)}</span>}
                   <span className="text-slate-600">{expandedFiltered.length} نقطه</span>
                   <span className="text-slate-700">{expandedFiltered[0]?.date} → {expandedFiltered.at(-1)?.date}</span>
                 </>
@@ -971,6 +1000,14 @@ export default function App() {
                   {expandedAvg != null && (
                     <ReferenceLine yAxisId="left" y={expandedAvg} stroke="#f59e0b55" strokeDasharray="4 4"
                       label={{ value: 'میانگین', fill: '#f59e0b', fontSize: 10 }} />
+                  )}
+                  {expandedStats.max != null && (
+                    <ReferenceLine yAxisId="left" y={expandedStats.max} stroke="#34d39933" strokeDasharray="2 6"
+                      label={{ value: 'max', fill: '#34d399', fontSize: 9, position: 'right' }} />
+                  )}
+                  {expandedStats.min != null && (
+                    <ReferenceLine yAxisId="left" y={expandedStats.min} stroke="#f4433633" strokeDasharray="2 6"
+                      label={{ value: 'min', fill: '#f44336', fontSize: 9, position: 'right' }} />
                   )}
                   <Area yAxisId="left" dataKey="value" stroke="#22d3ee" fill="#22d3ee12" strokeWidth={2} dot={false} />
                   {expandedSym2 && (

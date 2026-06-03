@@ -28,7 +28,7 @@ async def fetch_and_store_market_data(session: AsyncSession, symbol: str):
         try:
             info = await asyncio.to_thread(lambda: ticker.info)
             company_name = info.get("shortName", symbol.upper()) if isinstance(info, dict) else symbol.upper()
-        except:
+        except Exception:
             company_name = symbol.upper()
             
         indicator = Indicator(
