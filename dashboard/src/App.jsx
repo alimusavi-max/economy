@@ -182,6 +182,7 @@ export default function App() {
     _setMsg(typeof textOrObj === 'string' ? { text: textOrObj, type } : textOrObj)
   }, [])
 
+  const [recentActivity, setRecentActivity] = useState([])
   const [activeTab, setActiveTab] = useState('dashboard')
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchQuery, setQuickSearchQuery] = useState('')
@@ -265,13 +266,15 @@ export default function App() {
       if (search.trim()) params.search = search.trim()
       if (withDataOnly) params.with_data_only = true
 
-      const [sumR, fresR, symR] = await Promise.allSettled([
+      const [sumR, fresR, symR, actR] = await Promise.allSettled([
         axios.get(`${API_BASE}/data/summary`),
         axios.get(`${API_BASE}/data/freshness`),
         axios.get(`${API_BASE}/data/symbols/available`, { params }),
+        axios.get(`${API_BASE}/data/recent-activity`, { params: { limit: 8 } }),
       ])
       if (sumR.status === 'fulfilled') setSummary(sumR.value.data)
       if (fresR.status === 'fulfilled') setFreshness(fresR.value.data)
+      if (actR.status === 'fulfilled') setRecentActivity(actR.value.data || [])
       if (symR.status === 'fulfilled') {
         setSymbols(symR.value.data?.items || [])
         setSymbolsTotal(symR.value.data?.pagination?.total || 0)
@@ -705,6 +708,33 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {/* Recent Activity */}
+            {recentActivity.length > 0 && (
+              <div className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4">
+                <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
+                  <Clock size={14} className="text-cyan-400" /> آخرین آپدیت‌ها
+                </h3>
+                <div className="grid sm:grid-cols-2 gap-1.5">
+                  {recentActivity.map(item => (
+                    <button key={item.symbol} onClick={() => openExpanded(item.symbol)}
+                      className="flex items-center justify-between bg-slate-950 hover:bg-slate-900 rounded-lg px-3 py-2 text-xs transition-colors text-right">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <SourceBadge source={item.source} />
+                        <span className="font-mono text-cyan-300">{item.symbol}</span>
+                        <span className="text-slate-500 truncate hidden sm:block">{item.name?.slice(0, 25)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {item.data_points_count > 0 && (
+                          <span className="text-emerald-500">{fmt(item.data_points_count)}</span>
+                        )}
+                        <span className="text-slate-600">{item.last_updated}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Freshness */}
             {freshness?.totals && (

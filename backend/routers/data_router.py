@@ -83,6 +83,41 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/recent-activity")
+async def get_recent_activity(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """شاخص‌هایی که اخیراً آپدیت شده‌اند."""
+    from sqlalchemy import desc
+    result = await db.execute(
+        select(
+            Indicator.symbol,
+            Indicator.name,
+            Indicator.source,
+            Indicator.last_updated,
+            func.count(EconomicData.id).label("data_points_count"),
+        )
+        .select_from(Indicator)
+        .outerjoin(EconomicData, EconomicData.indicator_id == Indicator.id)
+        .where(Indicator.last_updated.isnot(None))
+        .group_by(Indicator.id, Indicator.symbol, Indicator.name, Indicator.source, Indicator.last_updated)
+        .order_by(desc(Indicator.last_updated))
+        .limit(limit)
+    )
+    rows = result.all()
+    return [
+        {
+            "symbol": r.symbol,
+            "name": r.name,
+            "source": r.source,
+            "last_updated": r.last_updated,
+            "data_points_count": int(r.data_points_count or 0),
+        }
+        for r in rows
+    ]
+
+
 @router.get("/freshness")
 async def get_freshness_overview(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
