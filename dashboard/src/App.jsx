@@ -1372,6 +1372,24 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
   const [corrResult, setCorrResult] = useState(null)
   const [running, setRunning] = useState(false)
   const [labRange, setLabRange] = useState('ALL')
+  const [savedFormulas, setSavedFormulas] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('saved_lab_formulas') || '[]') } catch { return [] }
+  })
+  const [showSavedFormulas, setShowSavedFormulas] = useState(false)
+
+  const saveFormula = () => {
+    if (!formula.trim()) return
+    const entry = { formula: formula.trim(), date: new Date().toLocaleDateString('fa-IR') }
+    const next = [entry, ...savedFormulas.filter(f => f.formula !== entry.formula)].slice(0, 20)
+    setSavedFormulas(next)
+    localStorage.setItem('saved_lab_formulas', JSON.stringify(next))
+  }
+
+  const deleteFormula = (f) => {
+    const next = savedFormulas.filter(sf => sf.formula !== f)
+    setSavedFormulas(next)
+    localStorage.setItem('saved_lab_formulas', JSON.stringify(next))
+  }
 
   const loadVar = useCallback(async (varId, sym) => {
     if (!sym) return
@@ -1519,18 +1537,48 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
 
       {/* Formula input (formula mode only) */}
       {labMode === 'formula' && (
-        <div className="flex gap-2">
-          <div className="flex-1 bg-slate-900 border border-slate-700 focus-within:border-purple-600 rounded-xl px-4 py-2.5 flex items-center gap-2 transition-colors">
-            <span className="text-slate-500 font-mono text-sm shrink-0">f =</span>
-            <input value={formula} onChange={e => setFormula(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && runCompute()}
-              className="flex-1 bg-transparent font-mono text-sm outline-none text-purple-300 placeholder-slate-700"
-              placeholder="مثال: A / B * 100" />
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <div className="flex-1 bg-slate-900 border border-slate-700 focus-within:border-purple-600 rounded-xl px-4 py-2.5 flex items-center gap-2 transition-colors">
+              <span className="text-slate-500 font-mono text-sm shrink-0">f =</span>
+              <input value={formula} onChange={e => setFormula(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && runCompute()}
+                className="flex-1 bg-transparent font-mono text-sm outline-none text-purple-300 placeholder-slate-700"
+                placeholder="مثال: A / B * 100" />
+            </div>
+            <button onClick={saveFormula} title="ذخیره فرمول"
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm transition-colors">💾</button>
+            <button onClick={() => setShowSavedFormulas(v => !v)} title="فرمول‌های ذخیره‌شده"
+              className={`px-3 py-2 rounded-xl text-sm transition-colors relative ${showSavedFormulas ? 'bg-purple-800' : 'bg-slate-800 hover:bg-slate-700'}`}>
+              📋
+              {savedFormulas.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-purple-600 rounded-full text-[9px] flex items-center justify-center">{savedFormulas.length}</span>
+              )}
+            </button>
+            <button onClick={runCompute} disabled={running}
+              className="px-5 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded-xl text-sm font-semibold transition-colors">
+              {running ? <span className="animate-pulse">...</span> : 'محاسبه'}
+            </button>
           </div>
-          <button onClick={runCompute} disabled={running}
-            className="px-5 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded-xl text-sm font-semibold transition-colors">
-            {running ? <span className="animate-pulse">...</span> : 'محاسبه'}
-          </button>
+          {showSavedFormulas && (
+            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 space-y-1.5">
+              <div className="text-[11px] text-slate-500 mb-1">فرمول‌های ذخیره‌شده:</div>
+              {savedFormulas.length === 0 && (
+                <div className="text-[11px] text-slate-700">هنوز فرمولی ذخیره نشده است. روی 💾 کلیک کنید.</div>
+              )}
+              {savedFormulas.map(sf => (
+                <div key={sf.formula} className="flex items-center gap-2 group">
+                  <button onClick={() => { setFormula(sf.formula); setShowSavedFormulas(false) }}
+                    className="flex-1 text-right font-mono text-xs text-purple-300 hover:text-purple-200 bg-slate-800 hover:bg-slate-700 rounded-lg px-3 py-1.5 transition-colors">
+                    {sf.formula}
+                  </button>
+                  <span className="text-[10px] text-slate-700 shrink-0">{sf.date}</span>
+                  <button onClick={() => deleteFormula(sf.formula)}
+                    className="text-slate-700 hover:text-rose-400 transition-colors text-xs opacity-0 group-hover:opacity-100">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {labMode === 'correlate' && (
