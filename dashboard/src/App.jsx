@@ -447,6 +447,9 @@ export default function App() {
   const symbolMap = useMemo(() =>
     Object.fromEntries(symbols.map(s => [s.symbol, s])), [symbols])
 
+  const freshnessMap = useMemo(() =>
+    Object.fromEntries((freshness?.items || []).map(i => [i.symbol, i])), [freshness])
+
   // ── login guard ──
   if (!isLoggedIn) {
     return <LoginView {...{ users, loginUserId, setLoginUserId, login, newUsername, setNewUsername, newDisplayName, setNewDisplayName, addUser, backendOk, msg: _msg }} />
@@ -472,6 +475,11 @@ export default function App() {
               <div className="flex items-center gap-2 text-xs">
                 <span className={`w-1.5 h-1.5 rounded-full ${backendOk === false ? 'bg-rose-500' : 'bg-emerald-400'}`} />
                 <span className="text-slate-400">{activeUser?.display_name}</span>
+                {(freshness?.totals?.stale ?? 0) > 0 && (
+                  <span className="bg-rose-700/60 text-rose-300 px-1.5 py-0.5 rounded-full text-[10px]">
+                    {freshness.totals.stale} دیرهنگام
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -504,10 +512,21 @@ export default function App() {
 
         {/* ── Tabs ── */}
         <nav className="flex gap-1 bg-slate-900/60 rounded-xl p-1 w-fit overflow-x-auto">
-          {[['dashboard','داشبورد'], ['sources','منابع'], ['manage','مدیریت'], ['users','حساب'], ['lab','آزمایشگاه']].map(([k, l]) => (
+          {[
+            ['dashboard', 'داشبورد', null],
+            ['sources', 'منابع', summary?.sources?.length],
+            ['manage', 'مدیریت', symbolsTotal || null],
+            ['users', 'حساب', null],
+            ['lab', 'آزمایشگاه', null],
+          ].map(([k, l, badge]) => (
             <button key={k} onClick={() => setActiveTab(k)}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === k ? 'bg-cyan-700 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'}`}>
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex items-center gap-1.5 ${activeTab === k ? 'bg-cyan-700 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'}`}>
               {l}
+              {badge != null && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${activeTab === k ? 'bg-cyan-600' : 'bg-slate-700 text-slate-500'}`}>
+                  {badge > 9999 ? `${Math.round(badge/1000)}k` : badge}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -623,7 +642,7 @@ export default function App() {
             {freshness?.totals && (
               <div className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4">
                 <h3 className="font-semibold text-sm flex items-center gap-2 mb-3"><WandSparkles size={14} /> سلامت فید جهانی</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                   {[
                     { k: 'healthy',       l: 'سالم',          c: '#34d399' },
                     { k: 'due_soon',      l: 'نزدیک سررسید',  c: '#fb923c' },
@@ -631,7 +650,7 @@ export default function App() {
                     { k: 'never_updated', l: 'بدون آپدیت',    c: '#a78bfa' },
                   ].map(({ k, l, c }) => {
                     const val = freshness.totals[k] ?? 0
-                    const tot = Object.values(freshness.totals).reduce((a, b) => a + b, 0) || 1
+                    const tot = freshness.totals.all || 1
                     const pct = Math.round((val / tot) * 100)
                     return (
                       <div key={k} className="bg-slate-950 rounded-xl p-3">
@@ -647,13 +666,35 @@ export default function App() {
                     )
                   })}
                 </div>
+                {/* Top stale indicators */}
+                {freshness?.items?.filter(i => i.status === 'stale').length > 0 && (
+                  <div>
+                    <div className="text-[11px] text-slate-600 mb-2">دیرهنگام‌ترین شاخص‌ها:</div>
+                    <div className="grid sm:grid-cols-2 gap-1.5">
+                      {freshness.items
+                        .filter(i => i.status === 'stale')
+                        .sort((a, b) => (b.days_since_update ?? 0) - (a.days_since_update ?? 0))
+                        .slice(0, 8)
+                        .map(item => (
+                          <div key={item.id}
+                            className="flex items-center justify-between bg-slate-950 rounded-lg px-3 py-1.5 text-[11px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <SourceBadge source={item.source} />
+                              <span className="font-mono truncate">{item.symbol}</span>
+                            </div>
+                            <span className="text-rose-400 shrink-0">{item.days_since_update}روز پیش</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </section>
         )}
 
         {activeTab === 'sources' && (
-          <SourcesPanel summary={summary} runPipeline={runPipeline} setMessage={setMessage} />
+          <SourcesPanel summary={summary} freshness={freshness} runPipeline={runPipeline} setMessage={setMessage} />
         )}
 
         {/* ── Manage ── */}
@@ -732,6 +773,7 @@ export default function App() {
                     <th className="p-2.5 text-right">نام</th>
                     <th className="p-2.5 text-right">منبع</th>
                     <th className="p-2.5 text-right">رکورد</th>
+                    <th className="p-2.5 text-right hidden md:table-cell">آپدیت</th>
                     <th className="p-2.5 text-right">بازه (روز)</th>
                     <th className="p-2.5 text-right">عملیات</th>
                   </tr>
@@ -746,12 +788,26 @@ export default function App() {
                             ? [...new Set([...p, row.symbol])]
                             : p.filter(s => s !== row.symbol))} />
                       </td>
-                      <td className="p-2.5 font-mono text-xs">{row.symbol}</td>
+                      <td className="p-2.5 font-mono text-xs">
+                        <div className="flex items-center gap-1.5">
+                          {(() => {
+                            const fst = freshnessMap[row.symbol]?.status
+                            const c = { healthy: '#34d399', due_soon: '#fb923c', stale: '#f43f5e', never_updated: '#a78bfa' }[fst]
+                            return c ? <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} title={fst} /> : null
+                          })()}
+                          {row.symbol}
+                        </div>
+                      </td>
                       <td className="p-2.5 text-slate-300 max-w-[180px] truncate text-xs">{row.name}</td>
                       <td className="p-2.5"><SourceBadge source={row.source} /></td>
                       <td className="p-2.5 text-xs">
-                        {row.data_points > 0
-                          ? <span className="text-emerald-400">{fmt(row.data_points)}</span>
+                        {row.data_points_count > 0
+                          ? <span className="text-emerald-400">{fmt(row.data_points_count)}</span>
+                          : <span className="text-slate-700">—</span>}
+                      </td>
+                      <td className="p-2.5 text-[11px] text-slate-500 hidden md:table-cell">
+                        {row.last_updated
+                          ? <span title={row.last_updated}>{row.last_updated}</span>
                           : <span className="text-slate-700">—</span>}
                       </td>
                       <td className="p-2.5">
@@ -1143,7 +1199,7 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
 }
 
 // ── Sources Panel ─────────────────────────────────────────
-function SourcesPanel({ summary, runPipeline, setMessage }) {
+function SourcesPanel({ summary, freshness, runPipeline, setMessage }) {
   const [busy, setBusy] = useState({})
 
   const sourceStats = useMemo(() => {
@@ -1151,6 +1207,14 @@ function SourcesPanel({ summary, runPipeline, setMessage }) {
     for (const s of summary?.sources || []) m[s.source] = s
     return m
   }, [summary])
+
+  const staleBySource = useMemo(() => {
+    const m = {}
+    for (const item of freshness?.items || []) {
+      if (item.status === 'stale') m[item.source] = (m[item.source] || 0) + 1
+    }
+    return m
+  }, [freshness])
 
   const discover = async (cfg) => {
     if (!cfg.discoverPath) return setMessage(`${cfg.label} نیاز به کانفیگ دستی دارد.`, 'warning')
@@ -1199,7 +1263,14 @@ function SourcesPanel({ summary, runPipeline, setMessage }) {
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-600">هر {cfg.interval}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-600">هر {cfg.interval}</span>
+                  {staleBySource[cfg.key] > 0 && (
+                    <span className="text-[10px] bg-rose-900/50 text-rose-400 px-1.5 py-0.5 rounded-full">
+                      {staleBySource[cfg.key]} دیرهنگام
+                    </span>
+                  )}
+                </div>
                 <button disabled={!cfg.discoverPath || busy[cfg.key]} onClick={() => discover(cfg)}
                   className="px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded-lg text-xs transition-colors">
                   {busy[cfg.key] ? <span className="animate-pulse">در حال کاوش...</span> : 'کاوش'}

@@ -556,6 +556,7 @@ async def combine_indicators_data(
 
 @router.post("/lab/formula")
 async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Depends(get_db)):
+    import ast
     import math
 
     series_data: Dict[str, Dict[Any, float]] = {}
@@ -577,12 +578,31 @@ async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Dep
     common_dates = sorted(list(common_dates))
 
     safe_math_env = {k: getattr(math, k) for k in dir(math) if not k.startswith("__")}
+    all_var_names = set(request.variables.keys()) | set(safe_math_env.keys())
+
+    try:
+        tree = ast.parse(request.formula, mode="eval")
+        ALLOWED_NODES = (
+            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name,
+            ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow,
+            ast.USub, ast.UAdd, ast.Mod, ast.Load, ast.keyword,
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, ALLOWED_NODES):
+                raise HTTPException(status_code=400, detail=f"عملگر غیرمجاز در فرمول: {type(node).__name__}")
+            if isinstance(node, ast.Name) and node.id not in all_var_names:
+                raise HTTPException(status_code=400, detail=f"متغیر یا تابع ناشناخته: '{node.id}'")
+        compiled = compile(tree, "<formula>", "eval")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"خطای نحوی در فرمول: {exc}") from exc
 
     combined_data = []
     for d in common_dates:
         local_vars = {var_name: series_data[var_name][d] for var_name in request.variables.keys()}
         try:
-            val = eval(request.formula, {"__builtins__": {}}, {**safe_math_env, **local_vars})
+            val = eval(compiled, {"__builtins__": {}}, {**safe_math_env, **local_vars})
             combined_data.append({"date": str(d), "value": round(val, 4)})
         except Exception:
             continue
