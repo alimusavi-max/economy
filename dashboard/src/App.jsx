@@ -647,6 +647,10 @@ export default function App() {
                     const symInfo = symbolMap[chart.symbol]
                     const src = symInfo?.source || ''
                     const indName = symInfo?.name || ''
+                    const lastUpdated = symInfo?.last_updated
+                    const daysSince = lastUpdated
+                      ? Math.floor((Date.now() - new Date(lastUpdated).getTime()) / 86400000) : null
+                    const fsStatus = freshnessMap[chart.symbol]?.status
                     return (
                       <div key={chart.symbol} className="bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-xl p-3 transition-colors">
                         <div className="flex items-center justify-between mb-1.5">
@@ -668,9 +672,16 @@ export default function App() {
                             ) : <span className="text-rose-400">{chart.error || 'بدون داده'}</span>}
                           </div>
                         </div>
-                        {indName && (
-                          <div className="text-[10px] text-slate-600 truncate mb-1.5" title={indName}>{indName}</div>
-                        )}
+                        <div className="flex items-center gap-2 mb-1.5">
+                          {indName && (
+                            <span className="text-[10px] text-slate-600 truncate flex-1" title={indName}>{indName}</span>
+                          )}
+                          {daysSince != null && (
+                            <span className={`text-[10px] shrink-0 ${fsStatus === 'stale' ? 'text-rose-500' : fsStatus === 'due_soon' ? 'text-amber-500' : 'text-slate-700'}`}>
+                              {daysSince === 0 ? 'امروز' : `${daysSince}ر پیش`}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-1 mb-2 flex-wrap">
                           {CHART_RANGES.map(r => (
                             <button key={r.key}
