@@ -924,21 +924,33 @@ export default function App() {
                 {/* Top stale indicators */}
                 {freshness?.items?.filter(i => i.status === 'stale').length > 0 && (
                   <div>
-                    <div className="text-[11px] text-slate-600 mb-2">دیرهنگام‌ترین شاخص‌ها:</div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[11px] text-slate-600">دیرهنگام‌ترین شاخص‌ها:</div>
+                      <button onClick={async () => {
+                        const staleSyms = freshness.items.filter(i => i.status === 'stale').map(i => i.symbol).slice(0, 30)
+                        try {
+                          await axios.post(`${API_BASE}/data/symbols/bulk-refresh`, { symbols: staleSyms })
+                          setMessage(`رفرش گروهی ${staleSyms.length} شاخص دیرهنگام در پس‌زمینه شروع شد.`, 'success')
+                        } catch (e) { setMessage(extractErrorMessage(e, 'خطا در رفرش گروهی'), 'error') }
+                      }}
+                        className="text-[10px] bg-rose-900/40 text-rose-300 px-2 py-0.5 rounded-full hover:bg-rose-900/60 transition-colors">
+                        رفرش همه دیرهنگام‌ها
+                      </button>
+                    </div>
                     <div className="grid sm:grid-cols-2 gap-1.5">
                       {freshness.items
                         .filter(i => i.status === 'stale')
                         .sort((a, b) => (b.days_since_update ?? 0) - (a.days_since_update ?? 0))
                         .slice(0, 8)
                         .map(item => (
-                          <div key={item.id}
-                            className="flex items-center justify-between bg-slate-950 rounded-lg px-3 py-1.5 text-[11px]">
+                          <button key={item.id} onClick={() => openExpanded(item.symbol)}
+                            className="flex items-center justify-between bg-slate-950 hover:bg-slate-900 rounded-lg px-3 py-1.5 text-[11px] transition-colors text-right">
                             <div className="flex items-center gap-1.5 min-w-0">
                               <SourceBadge source={item.source} />
                               <span className="font-mono truncate">{item.symbol}</span>
                             </div>
                             <span className="text-rose-400 shrink-0">{item.days_since_update}روز پیش</span>
-                          </div>
+                          </button>
                         ))}
                     </div>
                   </div>
