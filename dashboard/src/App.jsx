@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import {
   Area, AreaChart, Brush, CartesianGrid, ComposedChart,
-  Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis
+  Legend, Line, ReferenceLine, ResponsiveContainer, Scatter,
+  ScatterChart, Tooltip, XAxis, YAxis, ZAxis
 } from 'recharts'
 import {
   Activity, AlertCircle, AlertTriangle, CheckCircle, Clock,
@@ -1462,6 +1463,42 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
           <div className="text-[10px] text-slate-600">
             رنگ سبز = همبستگی مثبت قوی | رنگ قرمز = همبستگی منفی قوی | &gt;0.7 قوی، 0.4-0.7 متوسط
           </div>
+
+          {/* Scatter plots for each pair */}
+          {corrResult.scatter && Object.entries(corrResult.scatter).length > 0 && (
+            <div>
+              <div className="text-[11px] text-slate-500 mb-2">نمودار پراکندگی جفت‌ها:</div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {Object.entries(corrResult.scatter).map(([pairKey, data], i) => {
+                  const [a, b] = pairKey.split('_')
+                  const corr = corrResult.matrix.find(m => m.a === a && m.b === b)?.corr
+                  const clr = SERIES_COLORS[i % SERIES_COLORS.length]
+                  return (
+                    <div key={pairKey} className="bg-slate-950 border border-slate-800 rounded-xl p-3">
+                      <div className="text-[11px] font-mono mb-1 flex justify-between">
+                        <span style={{ color: clr }}>{a} vs {b}</span>
+                        {corr != null && <span className={Math.abs(corr) > 0.7 ? 'text-emerald-400' : 'text-slate-500'}>r={corr}</span>}
+                      </div>
+                      <div className="h-40">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ScatterChart>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                            <XAxis dataKey="x" name={a} stroke="#475569" tick={{ fontSize: 9 }} tickFormatter={fmt} />
+                            <YAxis dataKey="y" name={b} stroke="#475569" tick={{ fontSize: 9 }} tickFormatter={fmt} width={42} />
+                            <ZAxis range={[20, 20]} />
+                            <Tooltip cursor={{ strokeDasharray: '3 3' }}
+                              formatter={(v, name) => [fmtFull(v), name]}
+                              contentStyle={{ background: '#0f172a', border: '1px solid #334155', fontSize: 10 }} />
+                            <Scatter data={data.slice(0, 500)} fill={clr} fillOpacity={0.6} />
+                          </ScatterChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>
