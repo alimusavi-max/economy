@@ -209,6 +209,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchQuery, setQuickSearchQuery] = useState('')
+  const [quickSearchResults, setQuickSearchResults] = useState([])
+  const [quickSearchLoading, setQuickSearchLoading] = useState(false)
+  const quickSearchTimer = useRef(null)
   const [notifOpen, setNotifOpen] = useState(false)
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(0) // minutes; 0 = off
   const [sourceFilter, setSourceFilter] = useState('')
@@ -359,6 +362,22 @@ export default function App() {
     const t = setInterval(() => { loadDashboard(); if (selectedUserId) loadUserDashboard(selectedUserId) }, autoRefreshInterval * 60000)
     return () => clearInterval(t)
   }, [autoRefreshInterval, loadDashboard, loadUserDashboard, selectedUserId])
+
+  useEffect(() => {
+    if (quickSearchTimer.current) clearTimeout(quickSearchTimer.current)
+    if (!quickSearchQuery || quickSearchQuery.length < 2) { setQuickSearchResults([]); return }
+    quickSearchTimer.current = setTimeout(async () => {
+      setQuickSearchLoading(true)
+      try {
+        const r = await axios.get(`${API_BASE}/data/symbols/available`, {
+          params: { search: quickSearchQuery, limit: 12, page: 1, page_size: 12, paginated: true }
+        })
+        setQuickSearchResults(r.data?.items || [])
+      } catch { setQuickSearchResults([]) }
+      finally { setQuickSearchLoading(false) }
+    }, 300)
+    return () => clearTimeout(quickSearchTimer.current)
+  }, [quickSearchQuery, API_BASE])
   useEffect(() => {
     const h = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -1289,9 +1308,9 @@ export default function App() {
       {/* ── Quick Search (Ctrl+K) ── */}
       {quickSearchOpen && (() => {
         const q = quickSearchQuery.toLowerCase()
-        const filteredQS = symbols
-          .filter(s => !q || s.symbol.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q))
-          .slice(0, 12)
+        const filteredQS = quickSearchQuery.length >= 2
+          ? quickSearchResults
+          : symbols.filter(s => !q || s.symbol.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q)).slice(0, 12)
         return (
           <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-start justify-center pt-20 px-4" dir="rtl"
             onClick={() => setQuickSearchOpen(false)}>
@@ -1340,7 +1359,10 @@ export default function App() {
                     </div>
                   )
                 })}
-                {quickSearchQuery && filteredQS.length === 0 && (
+                {quickSearchLoading && (
+                  <div className="py-4 text-center text-slate-600 text-xs animate-pulse">در حال جستجو...</div>
+                )}
+                {!quickSearchLoading && quickSearchQuery && filteredQS.length === 0 && (
                   <div className="py-8 text-center text-slate-700 text-sm">نتیجه‌ای پیدا نشد</div>
                 )}
                 {!quickSearchQuery && symbols.length === 0 && (
