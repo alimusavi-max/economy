@@ -185,6 +185,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchQuery, setQuickSearchQuery] = useState('')
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(0) // minutes; 0 = off
   const [sourceFilter, setSourceFilter] = useState('')
   const [dbnomicsProviderFilter, setDbnomicsProviderFilter] = useState('')
   const [dbnomicsProviderSearch, setDbnomicsProviderSearch] = useState('')
@@ -312,6 +313,11 @@ export default function App() {
     const t = setTimeout(() => _setMsg(null), 5000)
     return () => clearTimeout(t)
   }, [_msg])
+  useEffect(() => {
+    if (!autoRefreshInterval) return
+    const t = setInterval(() => { loadDashboard(); if (selectedUserId) loadUserDashboard(selectedUserId) }, autoRefreshInterval * 60000)
+    return () => clearInterval(t)
+  }, [autoRefreshInterval, loadDashboard, loadUserDashboard, selectedUserId])
   useEffect(() => {
     const h = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -514,6 +520,15 @@ export default function App() {
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs flex items-center gap-1.5 transition-colors">
               <RefreshCcw size={12} className={loading ? 'animate-spin' : ''} /> رفرش
             </button>
+            <select value={autoRefreshInterval} onChange={e => setAutoRefreshInterval(Number(e.target.value))}
+              title="رفرش خودکار"
+              className="bg-slate-800 hover:bg-slate-700 border-0 rounded-lg px-3 py-1.5 text-xs transition-colors cursor-pointer">
+              <option value={0}>خودکار: خاموش</option>
+              <option value={1}>هر ۱ دقیقه</option>
+              <option value={5}>هر ۵ دقیقه</option>
+              <option value={15}>هر ۱۵ دقیقه</option>
+              <option value={60}>هر ۱ ساعت</option>
+            </select>
             <button onClick={() => runPipeline('/discover/auto-spider?source=ALL', 'کاوش همه ۱۴ منبع آغاز شد.')}
               className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs font-medium transition-colors">
               🌍 کاوش همه
@@ -793,6 +808,19 @@ export default function App() {
               <button onClick={() => setSelectedSymbols([])}
                 className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs transition-colors">
                 پاک انتخاب
+              </button>
+              <button onClick={() => {
+                if (!symbols.length) return
+                const rows = symbols.map(s => `${s.symbol},${s.source},"${(s.name||'').replace(/"/g, '')}",${s.data_points_count ?? 0},${s.last_updated ?? ''}`)
+                const csv = ['symbol,source,name,data_points,last_updated', ...rows].join('\n')
+                const a = Object.assign(document.createElement('a'), {
+                  href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+                  download: `indicators_${new Date().toISOString().slice(0, 10)}.csv`,
+                })
+                a.click(); URL.revokeObjectURL(a.href)
+              }}
+                className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 rounded-lg text-xs flex items-center gap-1 transition-colors">
+                <Download size={11} /> خروجی CSV
               </button>
               <button onClick={loadDashboard}
                 className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-xs mr-auto transition-colors">
