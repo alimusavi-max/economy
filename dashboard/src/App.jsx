@@ -618,9 +618,21 @@ export default function App() {
                 <span className="text-xs text-slate-500">{defaultDashboardSymbols.length}/{MAX_DASHBOARD_SYMBOLS}</span>
               </div>
               {dashboardCharts.length === 0 ? (
-                <div className="py-10 text-center text-slate-600">
-                  <Database size={32} className="mx-auto mb-2 opacity-20" />
-                  <p className="text-sm">از تب مدیریت، شاخص‌ها را به داشبورد اضافه کن</p>
+                <div className="py-10 text-center text-slate-600 space-y-3">
+                  <Database size={32} className="mx-auto opacity-20" />
+                  <p className="text-sm">شاخصی به داشبورد اضافه نشده</p>
+                  {(summary?.totals?.indicators ?? 0) === 0 ? (
+                    <div className="max-w-sm mx-auto bg-slate-950 border border-slate-800 rounded-xl p-4 text-right space-y-2">
+                      <p className="text-xs text-slate-500 font-semibold">شروع سریع:</p>
+                      <ol className="text-xs text-slate-500 list-decimal list-inside space-y-1">
+                        <li>روی <strong className="text-cyan-500">⚡ دریافت سریع</strong> کلیک کن تا ۲۴ شاخص مهم جهانی دانلود شود</li>
+                        <li>یا روی <strong className="text-emerald-500">🌍 کاوش همه</strong> کلیک کن تا همه ۱۴ منبع کاوش شوند</li>
+                        <li>از تب <strong className="text-indigo-400">مدیریت</strong>، شاخص‌ها را جستجو و به داشبورد اضافه کن</li>
+                      </ol>
+                    </div>
+                  ) : (
+                    <p className="text-xs">از تب <strong className="text-indigo-400">مدیریت</strong>، شاخص‌ها را انتخاب و اضافه کن</p>
+                  )}
                 </div>
               ) : (
                 <div className="grid lg:grid-cols-2 gap-4">
@@ -1130,9 +1142,11 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
     { id: 'A', symbol: '', data: [] },
     { id: 'B', symbol: '', data: [] },
   ])
+  const [labMode, setLabMode] = useState('formula') // 'formula' | 'correlate'
   const [formula, setFormula] = useState('A / B * 100')
   const [labResult, setLabResult] = useState([])
   const [labSeries, setLabSeries] = useState({})
+  const [corrResult, setCorrResult] = useState(null)
   const [running, setRunning] = useState(false)
   const [labRange, setLabRange] = useState('ALL')
 
@@ -1163,6 +1177,18 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
       payload[v.id] = v.symbol
     }
     setRunning(true)
+    if (labMode === 'correlate') {
+      try {
+        const r = await axios.post(`${API_BASE}/data/lab/correlate`, { formula: '', variables: payload })
+        setCorrResult(r.data); setLabResult([]); setLabSeries({})
+        setMessage(`همبستگی محاسبه شد. ${r.data.n_observations} نقطه مشترک.`, 'success')
+      } catch (e) {
+        setMessage(e?.response?.data?.detail || 'خطا در محاسبه همبستگی.', 'error')
+        setCorrResult(null)
+      } finally { setRunning(false) }
+      return
+    }
+    setCorrResult(null)
     try {
       const r = await axios.post(`${API_BASE}/data/lab/compute`, { formula, variables: payload })
       setLabResult(r.data?.result || [])
@@ -1187,6 +1213,16 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
       <h2 className="text-lg font-semibold flex items-center gap-2">
         <FlaskConical size={18} className="text-purple-400" /> آزمایشگاه شاخص‌های اقتصادی
       </h2>
+
+      {/* Mode toggle */}
+      <div className="flex gap-1 bg-slate-900 rounded-xl p-1 w-fit">
+        {[['formula', 'فرمول سازی'], ['correlate', 'همبستگی']].map(([k, l]) => (
+          <button key={k} onClick={() => setLabMode(k)}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${labMode === k ? 'bg-purple-700 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
 
       {/* Variables */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1235,20 +1271,28 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
         </div>
       </div>
 
-      {/* Formula input */}
-      <div className="flex gap-2">
-        <div className="flex-1 bg-slate-900 border border-slate-700 focus-within:border-purple-600 rounded-xl px-4 py-2.5 flex items-center gap-2 transition-colors">
-          <span className="text-slate-500 font-mono text-sm shrink-0">f =</span>
-          <input value={formula} onChange={e => setFormula(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && runCompute()}
-            className="flex-1 bg-transparent font-mono text-sm outline-none text-purple-300 placeholder-slate-700"
-            placeholder="مثال: A / B * 100" />
+      {/* Formula input (formula mode only) */}
+      {labMode === 'formula' && (
+        <div className="flex gap-2">
+          <div className="flex-1 bg-slate-900 border border-slate-700 focus-within:border-purple-600 rounded-xl px-4 py-2.5 flex items-center gap-2 transition-colors">
+            <span className="text-slate-500 font-mono text-sm shrink-0">f =</span>
+            <input value={formula} onChange={e => setFormula(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && runCompute()}
+              className="flex-1 bg-transparent font-mono text-sm outline-none text-purple-300 placeholder-slate-700"
+              placeholder="مثال: A / B * 100" />
+          </div>
+          <button onClick={runCompute} disabled={running}
+            className="px-5 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded-xl text-sm font-semibold transition-colors">
+            {running ? <span className="animate-pulse">...</span> : 'محاسبه'}
+          </button>
         </div>
+      )}
+      {labMode === 'correlate' && (
         <button onClick={runCompute} disabled={running}
-          className="px-5 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded-xl text-sm font-semibold transition-colors">
-          {running ? <span className="animate-pulse">...</span> : 'محاسبه'}
+          className="px-6 py-2.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded-xl text-sm font-semibold transition-colors">
+          {running ? <span className="animate-pulse">در حال محاسبه...</span> : 'محاسبه ماتریس همبستگی'}
         </button>
-      </div>
+      )}
 
       <div className="text-xs text-slate-700">
         توابع: <span className="text-slate-600 font-mono">lag  pct_change  rolling_mean  rolling_std  normalize  zscore  diff  cumsum  log  abs</span>
@@ -1325,10 +1369,57 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
         </div>
       )}
 
-      {labResult.length === 0 && Object.keys(labSeries).length === 0 && (
+      {labResult.length === 0 && Object.keys(labSeries).length === 0 && !corrResult && (
         <div className="h-40 bg-slate-900/40 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-700 text-sm gap-2">
           <FlaskConical size={28} className="opacity-20" />
-          متغیرها را انتخاب کن، فرمول بنویس و محاسبه را بزن
+          {labMode === 'formula' ? 'متغیرها را انتخاب کن، فرمول بنویس و محاسبه را بزن' : 'متغیرها را انتخاب کن و ماتریس همبستگی را محاسبه کن'}
+        </div>
+      )}
+
+      {/* Correlation results */}
+      {corrResult && (
+        <div className="bg-slate-900 border border-purple-900/40 rounded-xl p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-purple-300">ماتریس همبستگی پیرسون</span>
+            <span className="text-xs text-slate-500">{corrResult.n_observations} نقطه مشترک</span>
+          </div>
+          <div className="overflow-auto">
+            <table className="text-xs w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className="p-2 text-slate-600"></th>
+                  {Object.keys(corrResult.variables).map(k => (
+                    <th key={k} className="p-2 text-slate-400 font-mono">{k} ({corrResult.variables[k]?.slice(0,12)})</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.keys(corrResult.variables).map(rowVar => (
+                  <tr key={rowVar}>
+                    <td className="p-2 text-slate-400 font-mono font-bold">{rowVar}</td>
+                    {Object.keys(corrResult.variables).map(colVar => {
+                      const cell = corrResult.matrix.find(m => m.a === rowVar && m.b === colVar)
+                      const val = cell?.corr
+                      const abs = Math.abs(val ?? 0)
+                      const isStrong = abs > 0.7
+                      const isMod = abs > 0.4
+                      const bg = val === 1 ? '#1e293b' : isStrong ? (val > 0 ? '#065f46' : '#7f1d1d') : isMod ? (val > 0 ? '#14532d' : '#450a0a') : '#1e293b'
+                      const color = val == null ? '#475569' : val === 1 ? '#94a3b8' : isStrong ? '#86efac' : isMod ? '#6ee7b7' : '#94a3b8'
+                      return (
+                        <td key={colVar} className="p-2 text-center rounded"
+                          style={{ background: bg, color }}>
+                          {val != null ? val.toFixed(3) : '—'}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-[10px] text-slate-600">
+            رنگ سبز = همبستگی مثبت قوی | رنگ قرمز = همبستگی منفی قوی | &gt;0.7 قوی، 0.4-0.7 متوسط
+          </div>
         </div>
       )}
     </section>

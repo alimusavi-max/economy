@@ -766,6 +766,55 @@ async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = D
     return {"result": result_list, "series": series_out}
 
 
+@router.post("/lab/correlate")
+async def compute_correlation(request: ComputeRequest, db: AsyncSession = Depends(get_db)):
+    """
+    محاسبه ماتریس همبستگی پیرسون بین تمام سری‌های انتخاب‌شده
+    برمی‌گرداند: ماتریس همبستگی + scatter data برای هر جفت
+    """
+    raw: Dict[str, Dict[date, float]] = {}
+    for var_name, symbol in request.variables.items():
+        raw[var_name] = await _load_series(db, symbol)
+
+    if len(raw) < 2:
+        raise HTTPException(status_code=400, detail="حداقل ۲ متغیر برای همبستگی لازم است.")
+
+    df = pd.DataFrame(raw)
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index().dropna(how="all")
+
+    corr_matrix = df.corr(method="pearson").round(4)
+
+    matrix_out = []
+    for a in corr_matrix.index:
+        for b in corr_matrix.columns:
+            matrix_out.append({
+                "a": a,
+                "b": b,
+                "symbol_a": request.variables.get(a, a),
+                "symbol_b": request.variables.get(b, b),
+                "corr": round(float(corr_matrix.loc[a, b]), 4) if pd.notna(corr_matrix.loc[a, b]) else None,
+            })
+
+    scatter_pairs = {}
+    vars_list = list(request.variables.keys())
+    for i in range(len(vars_list)):
+        for j in range(i + 1, len(vars_list)):
+            a, b = vars_list[i], vars_list[j]
+            pair_df = df[[a, b]].dropna()
+            scatter_pairs[f"{a}_{b}"] = [
+                {"x": round(float(row[a]), 6), "y": round(float(row[b]), 6), "date": str(idx.date())}
+                for idx, row in pair_df.iterrows()
+            ]
+
+    return {
+        "matrix": matrix_out,
+        "variables": request.variables,
+        "n_observations": len(df.dropna()),
+        "scatter": scatter_pairs,
+    }
+
+
 @router.get("/{symbol}")
 async def get_economic_data(symbol: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
