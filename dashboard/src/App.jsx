@@ -6,7 +6,7 @@ import {
   ScatterChart, Tooltip, XAxis, YAxis, ZAxis
 } from 'recharts'
 import {
-  Activity, AlertCircle, AlertTriangle, CheckCircle, Clock,
+  Activity, AlertCircle, AlertTriangle, Bell, CheckCircle, Clock,
   Database, Download, FlaskConical, Info, LogOut, Maximize2,
   Minimize2, RefreshCcw, Search, SlidersHorizontal, TrendingDown,
   TrendingUp, UserPlus, Users, WandSparkles
@@ -193,6 +193,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchQuery, setQuickSearchQuery] = useState('')
+  const [notifOpen, setNotifOpen] = useState(false)
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(0) // minutes; 0 = off
   const [sourceFilter, setSourceFilter] = useState('')
   const [dbnomicsProviderFilter, setDbnomicsProviderFilter] = useState('')
@@ -564,6 +565,44 @@ export default function App() {
               className="px-3 py-1.5 bg-fuchsia-700 hover:bg-fuchsia-600 rounded-lg text-xs transition-colors">
               🏦 DBNOMICS
             </button>
+            <div className="relative">
+              <button onClick={() => setNotifOpen(v => !v)}
+                className="relative w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center transition-colors"
+                title="اعلانات">
+                <Bell size={14} className="text-slate-400" />
+                {(freshness?.totals?.stale ?? 0) > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 rounded-full text-[9px] flex items-center justify-center font-bold">
+                    {Math.min(freshness.totals.stale, 99)}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <div className="absolute left-0 top-10 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-slate-800 text-xs font-semibold text-slate-400">اعلانات</div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {freshness?.items?.filter(i => i.status === 'stale' || i.status === 'never_updated')
+                      .sort((a, b) => (b.days_since_update ?? 9999) - (a.days_since_update ?? 9999))
+                      .slice(0, 10)
+                      .map(item => (
+                        <button key={item.symbol} onClick={() => { openExpanded(item.symbol); setNotifOpen(false) }}
+                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-800 transition-colors text-right">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.status === 'stale' ? 'bg-rose-400' : 'bg-purple-400'}`} />
+                          <span className="font-mono text-xs text-cyan-300">{item.symbol}</span>
+                          <span className="text-[10px] text-slate-500 mr-auto shrink-0">
+                            {item.days_since_update != null ? `${item.days_since_update}ر` : 'هرگز'}
+                          </span>
+                        </button>
+                      ))}
+                    {(freshness?.totals?.stale ?? 0) === 0 && (freshness?.totals?.never_updated ?? 0) === 0 && (
+                      <div className="py-6 text-center text-xs text-slate-600">همه شاخص‌ها به‌روز هستند ✓</div>
+                    )}
+                    {!freshness && (
+                      <div className="py-6 text-center text-xs text-slate-600">در حال بارگذاری...</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <button title="خروج" onClick={logout}
               className="w-8 h-8 rounded-lg bg-slate-700 hover:bg-rose-800/60 flex items-center justify-center text-xs font-bold transition-colors">
               {initials}
