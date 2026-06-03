@@ -432,13 +432,16 @@ export default function App() {
     await loadDashboard()
   }
 
+  const [refreshingSymbols, setRefreshingSymbols] = useState(new Set())
   const refreshNow = async (sym) => {
+    setRefreshingSymbols(p => new Set([...p, sym]))
     try {
       await axios.post(`${API_BASE}/data/symbols/${sym}/refresh-now`)
       setMessage(`دریافت فوری ${sym} انجام شد.`, 'success')
       await loadDashboard()
       if (selectedUserId) await loadUserDashboard(selectedUserId)
     } catch (e) { setMessage(extractErrorMessage(e, 'رفرش فوری ناموفق.'), 'error') }
+    finally { setRefreshingSymbols(p => { const n = new Set(p); n.delete(sym); return n }) }
   }
 
   const openExpanded = async (sym, initData = null) => {
@@ -1110,10 +1113,10 @@ export default function App() {
                             className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs transition-colors">
                             نمایش
                           </button>
-                          <button disabled={!sourceSupportsRefresh(row.source)}
+                          <button disabled={!sourceSupportsRefresh(row.source) || refreshingSymbols.has(row.symbol)}
                             onClick={() => refreshNow(row.symbol)}
                             className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-700 disabled:opacity-40 rounded text-xs transition-colors">
-                            دریافت
+                            {refreshingSymbols.has(row.symbol) ? <span className="animate-pulse">...</span> : 'دریافت'}
                           </button>
                           <button onClick={() => addToDashboard(row.symbol)}
                             className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 rounded text-xs transition-colors">+</button>
@@ -1259,8 +1262,9 @@ export default function App() {
                 </a>
                 {sourceSupportsRefresh(symbolMap[expandedSym]?.source) && (
                   <button onClick={() => refreshNow(expandedSym)}
-                    className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-700 rounded-lg text-xs flex items-center gap-1 transition-colors">
-                    <RefreshCcw size={11} /> آپدیت
+                    disabled={refreshingSymbols.has(expandedSym)}
+                    className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-700 disabled:opacity-50 rounded-lg text-xs flex items-center gap-1 transition-colors">
+                    <RefreshCcw size={11} className={refreshingSymbols.has(expandedSym) ? 'animate-spin' : ''} /> آپدیت
                   </button>
                 )}
                 <button onClick={() => { addToDashboard(expandedSym) }}
