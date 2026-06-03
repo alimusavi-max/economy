@@ -21,6 +21,7 @@ class Indicator(Base):
 
     update_interval_days: Mapped[int] = mapped_column(Integer, default=30)
     last_updated: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    tags: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
     data_points: Mapped[List["EconomicData"]] = relationship(back_populates="indicator")
 

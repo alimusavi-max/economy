@@ -201,6 +201,18 @@ export default function App() {
   const [symbolsTotalPages, setSymbolsTotalPages] = useState(1)
   const [symbolsTotal, setSymbolsTotal] = useState(0)
   const [selectedSymbols, setSelectedSymbols] = useState([])
+  const [tagFilter, setTagFilter] = useState('')
+  const [pinnedSymbols, setPinnedSymbols] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pinned_symbols') || '[]') } catch { return [] }
+  })
+
+  const togglePin = (sym) => {
+    setPinnedSymbols(p => {
+      const next = p.includes(sym) ? p.filter(s => s !== sym) : [...p, sym]
+      localStorage.setItem('pinned_symbols', JSON.stringify(next))
+      return next
+    })
+  }
 
   const [users, setUsers] = useState([])
   const [selectedUserId, setSelectedUserId] = useState('')
@@ -811,7 +823,7 @@ export default function App() {
         {activeTab === 'manage' && (
           <section className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4 space-y-4">
             {/* Filters */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-10 gap-2">
               <label className="col-span-2 bg-slate-950 border border-slate-800 focus-within:border-cyan-700 rounded-lg px-3 py-2 flex items-center gap-2 transition-colors">
                 <Search size={13} className="text-slate-500 shrink-0" />
                 <input value={search} onChange={e => handleSearch(e.target.value)} placeholder="جستجو..."
@@ -844,6 +856,9 @@ export default function App() {
                 <input type="checkbox" checked={withDataOnly} onChange={e => { setWithDataOnly(e.target.checked); setSymbolsPage(1) }} />
                 <SlidersHorizontal size={12} className="text-slate-500" /> دارای دیتا
               </label>
+              <input value={tagFilter} onChange={e => setTagFilter(e.target.value)}
+                placeholder="فیلتر تگ..."
+                className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm" />
               <select value={symbolsPageSize} onChange={e => { setSymbolsPageSize(Number(e.target.value)); setSymbolsPage(1) }}
                 className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm">
                 <option value={50}>۵۰</option><option value={100}>۱۰۰</option>
@@ -903,9 +918,15 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {symbols.map(row => (
+                  {[...symbols]
+                    .filter(row => !tagFilter || (row.tags || '').toLowerCase().includes(tagFilter.toLowerCase()))
+                    .sort((a, b) => {
+                    const pa = pinnedSymbols.includes(a.symbol) ? 0 : 1
+                    const pb = pinnedSymbols.includes(b.symbol) ? 0 : 1
+                    return pa - pb
+                  }).map(row => (
                     <tr key={row.id}
-                      className={`border-t border-slate-800/60 hover:bg-slate-800/20 transition-colors ${selectedSymbols.includes(row.symbol) ? 'bg-cyan-900/10' : ''}`}>
+                      className={`border-t border-slate-800/60 hover:bg-slate-800/20 transition-colors ${selectedSymbols.includes(row.symbol) ? 'bg-cyan-900/10' : ''} ${pinnedSymbols.includes(row.symbol) ? 'bg-amber-900/5' : ''}`}>
                       <td className="p-2.5">
                         <input type="checkbox" checked={selectedSymbols.includes(row.symbol)}
                           onChange={e => setSelectedSymbols(p => e.target.checked
@@ -914,6 +935,11 @@ export default function App() {
                       </td>
                       <td className="p-2.5 font-mono text-xs">
                         <div className="flex items-center gap-1.5">
+                          <button onClick={() => togglePin(row.symbol)}
+                            title={pinnedSymbols.includes(row.symbol) ? 'از پین خارج کن' : 'پین کن'}
+                            className={`text-[10px] shrink-0 transition-colors ${pinnedSymbols.includes(row.symbol) ? 'text-amber-400' : 'text-slate-700 hover:text-slate-500'}`}>
+                            📌
+                          </button>
                           {(() => {
                             const fst = freshnessMap[row.symbol]?.status
                             const c = { healthy: '#34d399', due_soon: '#fb923c', stale: '#f43f5e', never_updated: '#a78bfa' }[fst]
@@ -922,7 +948,16 @@ export default function App() {
                           {row.symbol}
                         </div>
                       </td>
-                      <td className="p-2.5 text-slate-300 max-w-[180px] truncate text-xs">{row.name}</td>
+                      <td className="p-2.5 text-slate-300 max-w-[180px] text-xs">
+                        <div className="truncate" title={row.name}>{row.name}</div>
+                        {row.tags && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {row.tags.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                              <span key={t} className="bg-indigo-900/40 text-indigo-300 px-1.5 py-0 rounded text-[10px]">#{t}</span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="p-2.5"><SourceBadge source={row.source} /></td>
                       <td className="p-2.5 text-xs">
                         {row.data_points_count > 0
@@ -955,6 +990,17 @@ export default function App() {
                           </button>
                           <button onClick={() => addToDashboard(row.symbol)}
                             className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 rounded text-xs transition-colors">+</button>
+                          <button onClick={async () => {
+                            const current = row.tags || ''
+                            const input = prompt(`تگ‌های ${row.symbol} (با کاما جدا کنید):`, current)
+                            if (input === null) return
+                            try {
+                              await axios.patch(`${API_BASE}/data/symbols/${row.symbol}/tags`, { tags: input || null })
+                              await loadDashboard()
+                            } catch (e) { setMessage(extractErrorMessage(e, 'خطا در ذخیره تگ'), 'error') }
+                          }}
+                            title="ویرایش تگ‌ها"
+                            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs transition-colors">🏷</button>
                           <button onClick={async () => {
                             if (!confirm(`آیا مطمئنی که می‌خواهی ${row.symbol} را حذف کنی؟`)) return
                             try {
@@ -1063,6 +1109,17 @@ export default function App() {
                   className="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs flex items-center gap-1 transition-colors">
                   <Download size={11} /> CSV
                 </button>
+                {sourceSupportsRefresh(symbolMap[expandedSym]?.source) && (
+                  <button onClick={() => refreshNow(expandedSym)}
+                    className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-700 rounded-lg text-xs flex items-center gap-1 transition-colors">
+                    <RefreshCcw size={11} /> آپدیت
+                  </button>
+                )}
+                <button onClick={() => { addToDashboard(expandedSym) }}
+                  title="افزودن به داشبورد شخصی"
+                  className="px-2.5 py-1 bg-indigo-800 hover:bg-indigo-700 rounded-lg text-xs transition-colors">
+                  + داشبورد
+                </button>
                 <button onClick={() => { setExpandedOpen(false); setExpandedSym2(''); setExpandedData2([]) }}
                   className="px-2.5 py-1 bg-rose-800 hover:bg-rose-700 rounded-lg text-xs transition-colors">
                   <Minimize2 size={13} />
@@ -1130,51 +1187,74 @@ export default function App() {
       )}
 
       {/* ── Quick Search (Ctrl+K) ── */}
-      {quickSearchOpen && (
-        <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-start justify-center pt-24 px-4" dir="rtl"
-          onClick={() => setQuickSearchOpen(false)}>
-          <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
-            onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800">
-              <Search size={16} className="text-slate-500 shrink-0" />
-              <input autoFocus value={quickSearchQuery} onChange={e => setQuickSearchQuery(e.target.value)}
-                placeholder="جستجوی سریع نماد یا نام..." dir="rtl"
-                className="flex-1 bg-transparent text-sm outline-none placeholder-slate-600" />
-              <kbd className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">ESC</kbd>
-            </div>
-            <div className="max-h-72 overflow-y-auto">
-              {symbols
-                .filter(s => {
-                  const q = quickSearchQuery.toLowerCase()
-                  return !q || s.symbol.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q)
-                })
-                .slice(0, 12)
-                .map(s => (
-                  <button key={s.id} onClick={() => { openExpanded(s.symbol); setQuickSearchOpen(false) }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-800 transition-colors text-right">
-                    <SourceBadge source={s.source} />
-                    <span className="font-mono text-xs text-cyan-300 shrink-0">{s.symbol}</span>
-                    <span className="text-xs text-slate-400 truncate flex-1">{s.name}</span>
-                    {s.has_data && <span className="text-[10px] text-emerald-500 shrink-0">{fmt(s.data_points_count)} رکورد</span>}
-                  </button>
-                ))}
-              {quickSearchQuery && symbols.filter(s => {
-                const q = quickSearchQuery.toLowerCase()
-                return s.symbol.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q)
-              }).length === 0 && (
-                <div className="py-8 text-center text-slate-700 text-sm">نتیجه‌ای پیدا نشد</div>
+      {quickSearchOpen && (() => {
+        const q = quickSearchQuery.toLowerCase()
+        const filteredQS = symbols
+          .filter(s => !q || s.symbol.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q))
+          .slice(0, 12)
+        return (
+          <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-start justify-center pt-20 px-4" dir="rtl"
+            onClick={() => setQuickSearchOpen(false)}>
+            <div className="w-full max-w-xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800">
+                <Search size={16} className="text-slate-400 shrink-0" />
+                <input autoFocus value={quickSearchQuery} onChange={e => setQuickSearchQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && filteredQS.length > 0) {
+                      openExpanded(filteredQS[0].symbol)
+                      setQuickSearchOpen(false)
+                    }
+                  }}
+                  placeholder="جستجوی سریع نماد یا نام..." dir="rtl"
+                  className="flex-1 bg-transparent text-sm outline-none placeholder-slate-600" />
+                <kbd className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">ESC</kbd>
+              </div>
+              {!quickSearchQuery && (
+                <div className="px-4 pt-2 pb-1 flex flex-wrap gap-1">
+                  {['FRED', 'YAHOO', 'WORLDBANK', 'IMF'].map(src => (
+                    <button key={src} onClick={() => setQuickSearchQuery(src.toLowerCase())}
+                      className="text-[10px] px-2 py-0.5 rounded-full border border-slate-700 hover:border-slate-500 text-slate-500 hover:text-slate-300 transition-colors">
+                      {src}
+                    </button>
+                  ))}
+                </div>
               )}
-              {!quickSearchQuery && symbols.length === 0 && (
-                <div className="py-8 text-center text-slate-700 text-sm">شاخصی در پایگاه داده نیست</div>
-              )}
-            </div>
-            <div className="px-4 py-2 border-t border-slate-800 flex items-center justify-between">
-              <span className="text-[10px] text-slate-700">↵ برای باز کردن نمودار</span>
-              <span className="text-[10px] text-slate-700">⌘K برای باز/بستن</span>
+              <div className="max-h-80 overflow-y-auto">
+                {filteredQS.map((s, idx) => {
+                  const fsStatus = freshnessMap[s.symbol]?.status
+                  const dotColor = { healthy: '#34d399', due_soon: '#fb923c', stale: '#f43f5e', never_updated: '#a78bfa' }[fsStatus]
+                  return (
+                    <div key={s.id} className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${idx === 0 && quickSearchQuery ? 'bg-slate-800/60' : 'hover:bg-slate-800/40'}`}>
+                      <button className="flex items-center gap-3 flex-1 text-right min-w-0"
+                        onClick={() => { openExpanded(s.symbol); setQuickSearchOpen(false) }}>
+                        <SourceBadge source={s.source} />
+                        {dotColor && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />}
+                        <span className="font-mono text-xs text-cyan-300 shrink-0">{s.symbol}</span>
+                        <span className="text-xs text-slate-400 truncate flex-1">{s.name}</span>
+                        {s.has_data && <span className="text-[10px] text-emerald-500 shrink-0">{fmt(s.data_points_count)} رکورد</span>}
+                      </button>
+                      <button onClick={() => { addToDashboard(s.symbol); setQuickSearchOpen(false) }}
+                        title="افزودن به داشبورد"
+                        className="shrink-0 w-6 h-6 flex items-center justify-center rounded bg-slate-800 hover:bg-indigo-700 text-slate-500 hover:text-white transition-colors text-xs">+</button>
+                    </div>
+                  )
+                })}
+                {quickSearchQuery && filteredQS.length === 0 && (
+                  <div className="py-8 text-center text-slate-700 text-sm">نتیجه‌ای پیدا نشد</div>
+                )}
+                {!quickSearchQuery && symbols.length === 0 && (
+                  <div className="py-8 text-center text-slate-700 text-sm">شاخصی در پایگاه داده نیست</div>
+                )}
+              </div>
+              <div className="px-4 py-2 border-t border-slate-800 flex items-center justify-between">
+                <span className="text-[10px] text-slate-600">↵ باز کردن نمودار · + افزودن به داشبورد</span>
+                <span className="text-[10px] text-slate-600">⌘K برای باز/بستن</span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
@@ -1195,14 +1275,18 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
 
   const loadVar = useCallback(async (varId, sym) => {
     if (!sym) return
+    setVariables(p => p.map(v => v.id === varId ? { ...v, loading: true, error: null } : v))
     try {
       const r = await axios.get(`${API_BASE}/data/${sym}`)
-      setVariables(p => p.map(v => v.id === varId ? { ...v, data: r.data?.data || [] } : v))
-    } catch { /* ignore */ }
+      const data = r.data?.data || []
+      setVariables(p => p.map(v => v.id === varId ? { ...v, data, loading: false, error: data.length === 0 ? 'بدون داده' : null } : v))
+    } catch (e) {
+      setVariables(p => p.map(v => v.id === varId ? { ...v, loading: false, error: extractErrorMessage(e, 'خطا در بارگذاری') } : v))
+    }
   }, [API_BASE])
 
   const changeSym = (varId, sym) => {
-    setVariables(p => p.map(v => v.id === varId ? { ...v, symbol: sym, data: [] } : v))
+    setVariables(p => p.map(v => v.id === varId ? { ...v, symbol: sym, data: [], loading: false, error: null } : v))
     if (sym) loadVar(varId, sym)
   }
 
@@ -1282,8 +1366,27 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
               <option value="">انتخاب نماد...</option>
               {dataSymbols.map(s => <option key={s.id} value={s.symbol}>{s.symbol} — {s.name?.slice(0, 35)}</option>)}
             </select>
-            <MiniChart data={v.data} color={SERIES_COLORS[i % SERIES_COLORS.length]} />
-            {v.data.length > 0 && (
+            {v.symbol && (() => {
+              const sym = dataSymbols.find(s => s.symbol === v.symbol)
+              return sym ? (
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-600">
+                  <SourceBadge source={sym.source} />
+                  <span className="truncate">{sym.name?.slice(0, 40)}</span>
+                </div>
+              ) : null
+            })()}
+            {v.loading ? (
+              <div className="h-14 flex items-center justify-center">
+                <span className="text-xs text-slate-500 animate-pulse">در حال بارگذاری...</span>
+              </div>
+            ) : v.error ? (
+              <div className="h-14 flex items-center justify-center">
+                <span className="text-xs text-rose-500">{v.error}</span>
+              </div>
+            ) : (
+              <MiniChart data={v.data} color={SERIES_COLORS[i % SERIES_COLORS.length]} />
+            )}
+            {!v.loading && !v.error && v.data.length > 0 && (
               <div className="text-[10px] text-slate-600 flex justify-between">
                 <span>{v.data[0]?.date}</span>
                 <span>{v.data.length} رکورد</span>

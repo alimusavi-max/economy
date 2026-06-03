@@ -207,6 +207,7 @@ async def get_available_symbols(
             Indicator.dbnomics_provider,
             Indicator.update_interval_days,
             Indicator.last_updated,
+            Indicator.tags,
             func.count(EconomicData.id).label("data_points_count"),
         )
         .select_from(Indicator)
@@ -237,6 +238,7 @@ async def get_available_symbols(
         Indicator.dbnomics_provider,
         Indicator.update_interval_days,
         Indicator.last_updated,
+        Indicator.tags,
     )
 
     if with_data_only:
@@ -351,6 +353,7 @@ async def get_available_symbols(
             "last_updated": row.last_updated,
             "data_points_count": int(row.data_points_count or 0),
             "has_data": int(row.data_points_count or 0) > 0,
+            "tags": getattr(row, "tags", None),
         }
         for row in rows
     ]
@@ -910,6 +913,21 @@ async def compute_correlation(request: ComputeRequest, db: AsyncSession = Depend
         "n_observations": len(df.dropna()),
         "scatter": scatter_pairs,
     }
+
+
+class TagsRequest(BaseModel):
+    tags: Optional[str] = Field(default=None, max_length=200)
+
+
+@router.patch("/symbols/{symbol}/tags")
+async def update_symbol_tags(symbol: str, request: TagsRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    if not indicator:
+        raise HTTPException(status_code=404, detail="نماد یافت نشد")
+    indicator.tags = request.tags.strip() if request.tags else None
+    await db.commit()
+    return {"success": True, "symbol": indicator.symbol, "tags": indicator.tags}
 
 
 @router.get("/{symbol}")

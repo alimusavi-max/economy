@@ -50,6 +50,12 @@ async def ensure_backward_compatible_schema():
                     "ON indicators (dbnomics_provider)"
                 )
             )
+            await conn.execute(
+                text(
+                    "ALTER TABLE indicators "
+                    "ADD COLUMN IF NOT EXISTS tags VARCHAR(200)"
+                )
+            )
 
 
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
