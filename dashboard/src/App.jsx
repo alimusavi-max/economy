@@ -138,7 +138,7 @@ function Toast({ msg, onDismiss }) {
   )
 }
 
-function StatCard({ title, value, Icon, color = '#38bdf8' }) {
+function StatCard({ title, value, Icon, color = '#38bdf8', sub }) {
   return (
     <div className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4 relative overflow-hidden">
       <div className="absolute inset-0 opacity-[0.04] rounded-xl"
@@ -149,6 +149,7 @@ function StatCard({ title, value, Icon, color = '#38bdf8' }) {
           {Icon && <Icon size={13} style={{ color }} className="opacity-60" />}
         </div>
         <div className="text-2xl font-bold" style={{ color }}>{value != null ? fmt(value) : '—'}</div>
+        {sub && <div className="text-[10px] text-slate-600 mt-0.5">{sub}</div>}
       </div>
     </div>
   )
@@ -178,9 +179,14 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [_msg, _setMsg] = useState(null)
 
+  const _msgTimerRef = useRef(null)
   const setMessage = useCallback((textOrObj, type = 'info') => {
     if (!textOrObj) { _setMsg(null); return }
     _setMsg(typeof textOrObj === 'string' ? { text: textOrObj, type } : textOrObj)
+    if (_msgTimerRef.current) clearTimeout(_msgTimerRef.current)
+    if (type !== 'error') {
+      _msgTimerRef.current = setTimeout(() => _setMsg(null), 6000)
+    }
   }, [])
 
   const [recentActivity, setRecentActivity] = useState([])
@@ -597,11 +603,16 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <section className="space-y-5">
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              <StatCard title="کل شاخص‌ها" value={summary?.totals?.indicators} Icon={Database} color="#38bdf8" />
-              <StatCard title="دارای داده" value={summary?.totals?.indicators_with_data} Icon={CheckCircle} color="#34d399" />
-              <StatCard title="کل رکوردها" value={summary?.totals?.economic_data_points} Icon={Activity} color="#a78bfa" />
-              <StatCard title="دیرهنگام" value={freshness?.totals?.stale} Icon={Clock} color="#fb923c" />
-              <StatCard title="بدون آپدیت" value={freshness?.totals?.never_updated} Icon={AlertTriangle} color="#f472b6" />
+              <StatCard title="کل شاخص‌ها" value={summary?.totals?.indicators} Icon={Database} color="#38bdf8"
+                sub={`از ${summary?.sources?.length ?? 0} منبع`} />
+              <StatCard title="دارای داده" value={summary?.totals?.indicators_with_data} Icon={CheckCircle} color="#34d399"
+                sub={summary?.totals?.indicators > 0 ? `${Math.round((summary.totals.indicators_with_data / summary.totals.indicators) * 100)}% پوشش` : undefined} />
+              <StatCard title="کل رکوردها" value={summary?.totals?.economic_data_points} Icon={Activity} color="#a78bfa"
+                sub="نقطه داده اقتصادی" />
+              <StatCard title="دیرهنگام" value={freshness?.totals?.stale} Icon={Clock} color="#fb923c"
+                sub={freshness?.totals?.all > 0 ? `${Math.round((freshness.totals.stale / freshness.totals.all) * 100)}% از کل` : undefined} />
+              <StatCard title="بدون آپدیت" value={freshness?.totals?.never_updated} Icon={AlertTriangle} color="#f472b6"
+                sub={freshness?.totals?.all > 0 ? `${Math.round((freshness.totals.never_updated / freshness.totals.all) * 100)}% از کل` : undefined} />
             </div>
 
             {/* Source bar */}
@@ -613,14 +624,18 @@ export default function App() {
                     const color = SOURCE_COLOR_MAP[s.source] || '#64748b'
                     const pct = summary.totals.indicators > 0
                       ? Math.round((s.indicators / summary.totals.indicators) * 100) : 0
+                    const dataPct = s.indicators > 0
+                      ? Math.round((s.indicators_with_data / s.indicators) * 100) : 0
                     return (
-                      <div key={s.source} className="flex items-center gap-2 text-xs">
-                        <span className="w-20 shrink-0" style={{ color }}>{s.source}</span>
+                      <button key={s.source} onClick={() => { setSourceFilter(s.source); setActiveTab('manage') }}
+                        className="flex items-center gap-2 text-xs hover:bg-slate-800/50 rounded-lg px-1 py-0.5 transition-colors w-full text-right">
+                        <span className="w-20 shrink-0 font-mono" style={{ color }}>{s.source}</span>
                         <div className="flex-1 bg-slate-800 rounded-full h-1.5 overflow-hidden">
                           <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
                         </div>
-                        <span className="w-8 text-right text-slate-500">{s.indicators}</span>
-                      </div>
+                        <span className="w-16 text-right text-slate-500">{s.indicators_with_data}/{s.indicators}</span>
+                        <span className="w-10 text-right" style={{ color: dataPct > 50 ? color : '#64748b' }}>{dataPct}%</span>
+                      </button>
                     )
                   })}
                 </div>
