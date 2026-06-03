@@ -533,7 +533,8 @@ export default function App() {
               className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs font-medium transition-colors">
               🌍 کاوش همه
             </button>
-            <button onClick={() => runPipeline('/pipeline/trigger-all', 'دریافت موازی شروع شد.')}
+            <button onClick={() => runPipeline('/pipeline/trigger-all', 'دریافت موازی ۲۴ شاخص مهم شروع شد.')}
+              title="دریافت موازی GDP، CPI، نرخ بهره، طلا، نفت، ارز، سهام و کریپتو"
               className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-xs transition-colors">
               ⚡ دریافت سریع
             </button>
@@ -899,6 +900,17 @@ export default function App() {
                           </button>
                           <button onClick={() => addToDashboard(row.symbol)}
                             className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 rounded text-xs transition-colors">+</button>
+                          <button onClick={async () => {
+                            if (!confirm(`آیا مطمئنی که می‌خواهی ${row.symbol} را حذف کنی؟`)) return
+                            try {
+                              await axios.delete(`${API_BASE}/data/symbols/${row.symbol}`)
+                              setMessage(`${row.symbol} حذف شد.`, 'success')
+                              await loadDashboard()
+                            } catch (e) { setMessage(extractErrorMessage(e, 'حذف ناموفق.'), 'error') }
+                          }}
+                            className="px-2 py-1 bg-slate-700 hover:bg-rose-700 rounded text-xs transition-colors text-slate-400 hover:text-white">
+                            ✕
+                          </button>
                         </div>
                       </td>
                     </tr>

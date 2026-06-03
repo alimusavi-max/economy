@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -426,6 +426,27 @@ async def update_symbol_interval(symbol: str, request: UpdateIntervalRequest, db
     await db.commit()
 
     return {"success": True, "message": f"بازه آپدیت نماد {symbol} به {request.update_interval_days} روز تغییر یافت."}
+
+
+@router.delete("/symbols/{symbol}")
+async def delete_indicator(symbol: str, data_only: bool = False, db: AsyncSession = Depends(get_db)):
+    """حذف یک شاخص (و در صورت لزوم داده‌های آن) از دیتابیس."""
+    result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    if not indicator:
+        raise HTTPException(status_code=404, detail="نماد یافت نشد")
+
+    await db.execute(delete(EconomicData).where(EconomicData.indicator_id == indicator.id))
+    if not data_only:
+        await db.delete(indicator)
+    else:
+        indicator.last_updated = None
+        db.add(indicator)
+
+    await db.commit()
+    if data_only:
+        return {"success": True, "message": f"داده‌های {symbol} پاک شد؛ تعریف شاخص حفظ شد."}
+    return {"success": True, "message": f"شاخص {symbol} و تمام داده‌هایش حذف شد."}
 
 
 @router.post("/symbols/{symbol}/refresh-now")
