@@ -392,10 +392,11 @@ export default function App() {
       if (e.key === 's') setActiveTab('sources')
       if (e.key === 'm') setActiveTab('manage')
       if (e.key === 'l') setActiveTab('lab')
+      if (e.key === 'r') loadDashboard()
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [setActiveTab, quickSearchOpen])
+  }, [setActiveTab, quickSearchOpen, loadDashboard])
 
   const debounceRef = useRef(null)
   const handleSearch = useCallback((val) => {
@@ -671,7 +672,7 @@ export default function App() {
             </button>
           ))}
         </div>
-        <span title="میانبر صفحه‌کلید: D داشبورد، S منابع، M مدیریت، L آزمایشگاه، ESC بستن پنجره"
+        <span title="میانبر صفحه‌کلید: D داشبورد، S منابع، M مدیریت، L آزمایشگاه، R رفرش، ESC بستن پنجره، Ctrl+K جستجو"
           className="text-slate-700 hover:text-slate-500 cursor-help text-xs hidden sm:block select-none">⌨</span>
         </nav>
 
@@ -694,7 +695,10 @@ export default function App() {
             {/* Source bar */}
             {summary?.sources?.length > 0 && (
               <div className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4">
-                <div className="text-xs text-slate-500 mb-3">توزیع شاخص‌ها بر اساس منبع</div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs text-slate-500">توزیع شاخص‌ها بر اساس منبع</div>
+                  <div className="text-[10px] text-slate-600">کلیک برای فیلتر مدیریت</div>
+                </div>
                 <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
                   {summary.sources.map(s => {
                     const color = SOURCE_COLOR_MAP[s.source] || '#64748b'
@@ -711,6 +715,9 @@ export default function App() {
                         </div>
                         <span className="w-16 text-right text-slate-500">{s.indicators_with_data}/{s.indicators}</span>
                         <span className="w-10 text-right" style={{ color: dataPct > 50 ? color : '#64748b' }}>{dataPct}%</span>
+                        {s.data_points > 0 && (
+                          <span className="text-[10px] text-slate-700 shrink-0 hidden lg:block w-16">{fmt(s.data_points)}</span>
+                        )}
                       </button>
                     )
                   })}

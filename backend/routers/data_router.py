@@ -56,6 +56,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
             Indicator.source,
             func.count(Indicator.id).label("indicator_count"),
             func.count(func.distinct(EconomicData.indicator_id)).label("with_data_count"),
+            func.count(EconomicData.id).label("data_points_count"),
         )
         .select_from(Indicator)
         .outerjoin(EconomicData, EconomicData.indicator_id == Indicator.id)
@@ -68,6 +69,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
             "source": row.source,
             "indicators": int(row.indicator_count or 0),
             "indicators_with_data": int(row.with_data_count or 0),
+            "data_points": int(row.data_points_count or 0),
         }
         for row in by_source_q.all()
     ]
