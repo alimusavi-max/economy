@@ -959,6 +959,36 @@ async def update_symbol_tags(symbol: str, request: TagsRequest, db: AsyncSession
     return {"success": True, "symbol": indicator.symbol, "tags": indicator.tags}
 
 
+@router.get("/{symbol}/export.csv")
+async def export_symbol_csv(symbol: str, db: AsyncSession = Depends(get_db)):
+    """خروجی CSV برای یک شاخص."""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    if not indicator:
+        raise HTTPException(status_code=404, detail="شاخص یافت نشد.")
+
+    data_result = await db.execute(
+        select(EconomicData)
+        .where(EconomicData.indicator_id == indicator.id)
+        .order_by(EconomicData.date.asc())
+    )
+    records = data_result.scalars().all()
+
+    lines = ["date,value"]
+    for r in records:
+        lines.append(f"{r.date},{r.value}")
+
+    content = "\n".join(lines)
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{symbol.upper()}.csv"'},
+    )
+
+
 @router.get("/{symbol}")
 async def get_economic_data(symbol: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))

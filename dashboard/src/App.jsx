@@ -1243,8 +1243,12 @@ export default function App() {
                 ))}
                 <button onClick={() => exportCSV(expandedFiltered, expandedSym)}
                   className="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs flex items-center gap-1 transition-colors">
-                  <Download size={11} /> CSV
+                  <Download size={11} /> CSV (فیلتر)
                 </button>
+                <a href={`${API_BASE}/data/${expandedSym}/export.csv`} download={`${expandedSym}.csv`}
+                  className="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs flex items-center gap-1 transition-colors">
+                  <Download size={11} /> CSV (کامل)
+                </a>
                 {sourceSupportsRefresh(symbolMap[expandedSym]?.source) && (
                   <button onClick={() => refreshNow(expandedSym)}
                     className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-700 rounded-lg text-xs flex items-center gap-1 transition-colors">
