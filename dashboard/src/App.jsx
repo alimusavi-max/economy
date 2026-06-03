@@ -251,6 +251,7 @@ export default function App() {
 
   const [expandedOpen, setExpandedOpen] = useState(false)
   const [expandedSym, setExpandedSym] = useState('')
+  const [expandedTableMode, setExpandedTableMode] = useState(false)
   const [expandedData, setExpandedData] = useState([])
   const [expandedRange, setExpandedRange] = useState('ALL')
   const [expandedSym2, setExpandedSym2] = useState('')
@@ -1267,7 +1268,12 @@ export default function App() {
                   className="px-2.5 py-1 bg-indigo-800 hover:bg-indigo-700 rounded-lg text-xs transition-colors">
                   + داشبورد
                 </button>
-                <button onClick={() => { setExpandedOpen(false); setExpandedSym2(''); setExpandedData2([]) }}
+                <button onClick={() => setExpandedTableMode(v => !v)}
+                  title={expandedTableMode ? 'نمایش نمودار' : 'نمایش جدول'}
+                  className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${expandedTableMode ? 'bg-cyan-700' : 'bg-slate-800 hover:bg-slate-700'}`}>
+                  {expandedTableMode ? '📈 نمودار' : '📋 جدول'}
+                </button>
+                <button onClick={() => { setExpandedOpen(false); setExpandedSym2(''); setExpandedData2([]); setExpandedTableMode(false) }}
                   className="px-2.5 py-1 bg-rose-800 hover:bg-rose-700 rounded-lg text-xs transition-colors">
                   <Minimize2 size={13} />
                 </button>
@@ -1293,7 +1299,32 @@ export default function App() {
               )}
             </div>
 
-            {/* chart */}
+            {/* chart / table */}
+            {expandedTableMode ? (
+              <div className="flex-1 overflow-auto p-4 min-h-0">
+                <table className="w-full text-xs text-right border-collapse">
+                  <thead className="sticky top-0 bg-slate-900">
+                    <tr>
+                      <th className="p-2 border-b border-slate-800 text-slate-500">تاریخ</th>
+                      <th className="p-2 border-b border-slate-800 text-slate-500 text-left">مقدار</th>
+                      {expandedSym2 && <th className="p-2 border-b border-slate-800 text-purple-400 text-left">{expandedSym2}</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...expandedFiltered].reverse().map((d, i) => {
+                      const v2 = expandedData2.length ? filterByRange(expandedData2, expandedRange).find(x => x.date === d.date)?.value : null
+                      return (
+                        <tr key={d.date} className={`border-b border-slate-800/30 ${i % 2 === 0 ? 'bg-slate-950/20' : ''}`}>
+                          <td className="p-2 font-mono text-slate-400">{d.date}</td>
+                          <td className="p-2 font-mono text-cyan-300 text-left">{fmtFull(d.value)}</td>
+                          {expandedSym2 && <td className="p-2 font-mono text-purple-300 text-left">{v2 != null ? fmtFull(v2) : '—'}</td>}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
             <div className="flex-1 p-4 min-h-0">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={mergedData || expandedFiltered}>
@@ -1329,6 +1360,7 @@ export default function App() {
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+            )}
           </div>
         </div>
       )}
