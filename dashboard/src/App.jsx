@@ -438,16 +438,16 @@ export default function App() {
   }
 
   const refreshVisible = async () => {
-    const list = symbols.filter(s => sourceSupportsRefresh(s.source)).slice(0, 20)
-    if (!list.length) return setMessage('نماد قابل رفرش در این صفحه نیست.', 'warning')
-    let ok = 0
-    for (const row of list) {
-      try { await axios.post(`${API_BASE}/data/symbols/${row.symbol}/refresh-now`); ok++ }
-      catch { continue }
+    const list = selectedSymbols.length > 0
+      ? selectedSymbols
+      : symbols.filter(s => sourceSupportsRefresh(s.source)).slice(0, 30).map(s => s.symbol)
+    if (!list.length) return setMessage('نماد قابل رفرش پیدا نشد.', 'warning')
+    try {
+      const r = await axios.post(`${API_BASE}/data/symbols/bulk-refresh`, { symbols: list })
+      setMessage(r.data?.message || `رفرش ${list.length} شاخص آغاز شد.`, 'success')
+    } catch (e) {
+      setMessage(extractErrorMessage(e, 'رفرش گروهی ناموفق.'), 'error')
     }
-    await loadDashboard()
-    if (selectedUserId) await loadUserDashboard(selectedUserId)
-    setMessage(`رفرش گروهی: ${ok} از ${list.length} موفق.`, ok > 0 ? 'success' : 'warning')
   }
 
   const removeFromDashboard = async (sym) =>
@@ -856,8 +856,9 @@ export default function App() {
                 افزودن انتخاب‌شده ({selectedSymbols.length})
               </button>
               <button onClick={refreshVisible}
+                title={selectedSymbols.length > 0 ? `رفرش ${selectedSymbols.length} نماد انتخاب‌شده` : 'رفرش ۳۰ نماد اول صفحه در پس‌زمینه'}
                 className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs transition-colors">
-                رفرش گروهی صفحه
+                {selectedSymbols.length > 0 ? `رفرش انتخاب‌شده (${selectedSymbols.length})` : 'رفرش گروهی'}
               </button>
               <button onClick={() => setSelectedSymbols([])}
                 className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs transition-colors">

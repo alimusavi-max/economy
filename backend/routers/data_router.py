@@ -3,7 +3,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import ProgrammingError
@@ -446,6 +446,68 @@ async def get_dbnomics_providers(
             {"provider": provider, "indicators": counts[provider]}
             for provider in sorted(counts.keys())
         ]
+
+
+class BulkSymbolsRequest(BaseModel):
+    symbols: List[str] = Field(max_length=50)
+
+
+@router.post("/symbols/bulk-refresh")
+async def bulk_refresh_symbols(request: BulkSymbolsRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    """دریافت چندین شاخص به صورت پس‌زمینه."""
+    from database.database import AsyncSessionLocal
+
+    clean = [s.strip().upper() for s in request.symbols if s.strip()][:50]
+    if not clean:
+        raise HTTPException(status_code=400, detail="حداقل یک نماد باید مشخص شود.")
+
+    async def _run_bulk():
+        async with AsyncSessionLocal() as session:
+            for sym in clean:
+                try:
+                    ind_r = await session.execute(select(Indicator).where(Indicator.symbol == sym))
+                    ind = ind_r.scalar_one_or_none()
+                    if not ind:
+                        continue
+                    # use same dispatch logic as refresh-now
+                    if ind.source == "FRED":
+                        await fetch_and_store_fred_series(session, ind.symbol, ind.name, ind.frequency or "Monthly")
+                    elif ind.source == "YAHOO":
+                        await fetch_and_store_market_data(session, ind.symbol)
+                    elif ind.source == "WORLDBANK":
+                        parts = ind.symbol.split("_", 2)
+                        if len(parts) == 3:
+                            _, country, wb_id = parts
+                            await fetch_world_bank_data(session, country, wb_id, ind.name)
+                    elif ind.source == "ECB":
+                        await fetch_and_store_ecb_data(session, ind.symbol)
+                    elif ind.source == "DBNOMICS":
+                        await fetch_and_store_dbnomics_data(session, ind.symbol)
+                    elif ind.source == "IMF":
+                        await fetch_and_store_imf_data(session, ind.symbol)
+                    elif ind.source == "OECD":
+                        await fetch_and_store_oecd_data(session, ind.symbol)
+                    elif ind.source == "BIS":
+                        await fetch_and_store_bis_data(session, ind.symbol)
+                    elif ind.source == "EUROSTAT":
+                        await fetch_and_store_eurostat_data(session, ind.symbol)
+                    elif ind.source == "ALPHAVANTAGE":
+                        await fetch_and_store_alphavantage(session, ind.symbol)
+                    elif ind.source == "ILO":
+                        await fetch_and_store_ilo_data(session, ind.symbol)
+                    elif ind.source == "TREASURY":
+                        await fetch_and_store_treasury_data(session, ind.symbol)
+                    elif ind.source == "FAO":
+                        await fetch_and_store_fao_data(session, ind.symbol)
+                    elif ind.source == "UN":
+                        await fetch_and_store_un_data(session, ind.symbol)
+                except Exception as e:
+                    print(f"[bulk-refresh] خطا در {sym}: {e}")
+                import asyncio
+                await asyncio.sleep(1)
+
+    background_tasks.add_task(_run_bulk)
+    return {"success": True, "queued": len(clean), "message": f"رفرش {len(clean)} شاخص در پس‌زمینه آغاز شد."}
 
 
 @router.put("/symbols/{symbol}/interval")
