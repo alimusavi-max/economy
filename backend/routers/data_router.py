@@ -835,12 +835,24 @@ async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = D
     def _cumsum(s: pd.Series) -> pd.Series:
         return s.cumsum()
 
+    def _rolling_median(s: pd.Series, n: int = 12) -> pd.Series:
+        return s.rolling(window=n, min_periods=1).median()
+
+    def _ewm(s: pd.Series, span: int = 12) -> pd.Series:
+        return s.ewm(span=span, adjust=False).mean()
+
+    def _clip(s: pd.Series, lo: float = None, hi: float = None) -> pd.Series:
+        return s.clip(lower=lo, upper=hi)
+
     env = {
         **_math,
         "lag": _lag,
         "pct_change": _pct_change,
         "rolling_mean": _rolling_mean,
         "rolling_std": _rolling_std,
+        "rolling_median": _rolling_median,
+        "ewm": _ewm,
+        "clip": _clip,
         "normalize": _normalize,
         "zscore": _zscore,
         "diff": _diff,
@@ -848,6 +860,7 @@ async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = D
         "log": lambda s: s.apply(lambda x: math.log(x) if x > 0 else float("nan")),
         "exp": lambda s: s.apply(math.exp),
         "abs": lambda s: s.abs(),
+        "sqrt": lambda s: s.apply(lambda x: math.sqrt(x) if x >= 0 else float("nan")),
     }
 
     col_vars = {col: df[col] for col in df.columns if col in request.variables}

@@ -59,6 +59,9 @@ const FORMULA_TEMPLATES = [
   { label: 'مجموع تجمعی', formula: 'cumsum(A)', hint: 'A = هر سری' },
   { label: 'STD-12', formula: 'rolling_std(A, 12)', hint: 'A = سری ماهانه' },
   { label: 'تغییر ۳ماهه', formula: 'pct_change(A, 3)', hint: 'A = سری ماهانه' },
+  { label: 'میانه-12', formula: 'rolling_median(A, 12)', hint: 'A = سری ماهانه' },
+  { label: 'EWM-12', formula: 'ewm(A, 12)', hint: 'میانگین وزنی نمایی' },
+  { label: 'ریشه دوم', formula: 'sqrt(A)', hint: 'A = هر سری مثبت' },
 ]
 
 const SERIES_COLORS = ['#38bdf8', '#a78bfa', '#34d399', '#fb923c', '#f472b6', '#facc15']
@@ -1675,7 +1678,7 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
       )}
 
       <div className="text-xs text-slate-700">
-        توابع: <span className="text-slate-600 font-mono">lag  pct_change  rolling_mean  rolling_std  normalize  zscore  diff  cumsum  log  abs</span>
+        توابع: <span className="text-slate-600 font-mono">lag  pct_change  rolling_mean  rolling_median  rolling_std  ewm  normalize  zscore  diff  cumsum  log  sqrt  abs  clip</span>
       </div>
 
       {/* Results */}
