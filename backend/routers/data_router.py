@@ -3,9 +3,9 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +56,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
             Indicator.source,
             func.count(Indicator.id).label("indicator_count"),
             func.count(func.distinct(EconomicData.indicator_id)).label("with_data_count"),
+            func.count(EconomicData.id).label("data_points_count"),
         )
         .select_from(Indicator)
         .outerjoin(EconomicData, EconomicData.indicator_id == Indicator.id)
@@ -68,6 +69,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
             "source": row.source,
             "indicators": int(row.indicator_count or 0),
             "indicators_with_data": int(row.with_data_count or 0),
+            "data_points": int(row.data_points_count or 0),
         }
         for row in by_source_q.all()
     ]
@@ -81,6 +83,70 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
         "sources": by_source,
         "generated_at": date.today(),
     }
+
+
+@router.get("/top-series")
+async def get_top_series(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=10, ge=1, le=50),
+    source: Optional[str] = Query(default=None),
+):
+    """بیشترین رکوردها در هر شاخص."""
+    q = (
+        select(
+            Indicator.symbol,
+            Indicator.name,
+            Indicator.source,
+            func.count(EconomicData.id).label("data_points_count"),
+        )
+        .select_from(Indicator)
+        .join(EconomicData, EconomicData.indicator_id == Indicator.id)
+        .group_by(Indicator.id, Indicator.symbol, Indicator.name, Indicator.source)
+        .order_by(func.count(EconomicData.id).desc())
+        .limit(limit)
+    )
+    if source:
+        q = q.where(Indicator.source == source.upper())
+    rows = (await db.execute(q)).all()
+    return [
+        {"symbol": r.symbol, "name": r.name, "source": r.source, "data_points_count": int(r.data_points_count)}
+        for r in rows
+    ]
+
+
+@router.get("/recent-activity")
+async def get_recent_activity(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """شاخص‌هایی که اخیراً آپدیت شده‌اند."""
+    from sqlalchemy import desc
+    result = await db.execute(
+        select(
+            Indicator.symbol,
+            Indicator.name,
+            Indicator.source,
+            Indicator.last_updated,
+            func.count(EconomicData.id).label("data_points_count"),
+        )
+        .select_from(Indicator)
+        .outerjoin(EconomicData, EconomicData.indicator_id == Indicator.id)
+        .where(Indicator.last_updated.isnot(None))
+        .group_by(Indicator.id, Indicator.symbol, Indicator.name, Indicator.source, Indicator.last_updated)
+        .order_by(desc(Indicator.last_updated))
+        .limit(limit)
+    )
+    rows = result.all()
+    return [
+        {
+            "symbol": r.symbol,
+            "name": r.name,
+            "source": r.source,
+            "last_updated": r.last_updated,
+            "data_points_count": int(r.data_points_count or 0),
+        }
+        for r in rows
+    ]
 
 
 @router.get("/freshness")
@@ -172,6 +238,7 @@ async def get_available_symbols(
             Indicator.dbnomics_provider,
             Indicator.update_interval_days,
             Indicator.last_updated,
+            Indicator.tags,
             func.count(EconomicData.id).label("data_points_count"),
         )
         .select_from(Indicator)
@@ -202,6 +269,7 @@ async def get_available_symbols(
         Indicator.dbnomics_provider,
         Indicator.update_interval_days,
         Indicator.last_updated,
+        Indicator.tags,
     )
 
     if with_data_only:
@@ -316,6 +384,7 @@ async def get_available_symbols(
             "last_updated": row.last_updated,
             "data_points_count": int(row.data_points_count or 0),
             "has_data": int(row.data_points_count or 0) > 0,
+            "tags": getattr(row, "tags", None),
         }
         for row in rows
     ]
@@ -413,6 +482,68 @@ async def get_dbnomics_providers(
         ]
 
 
+class BulkSymbolsRequest(BaseModel):
+    symbols: List[str] = Field(max_length=50)
+
+
+@router.post("/symbols/bulk-refresh")
+async def bulk_refresh_symbols(request: BulkSymbolsRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    """دریافت چندین شاخص به صورت پس‌زمینه."""
+    from database.database import AsyncSessionLocal
+
+    clean = [s.strip().upper() for s in request.symbols if s.strip()][:50]
+    if not clean:
+        raise HTTPException(status_code=400, detail="حداقل یک نماد باید مشخص شود.")
+
+    async def _run_bulk():
+        async with AsyncSessionLocal() as session:
+            for sym in clean:
+                try:
+                    ind_r = await session.execute(select(Indicator).where(Indicator.symbol == sym))
+                    ind = ind_r.scalar_one_or_none()
+                    if not ind:
+                        continue
+                    # use same dispatch logic as refresh-now
+                    if ind.source == "FRED":
+                        await fetch_and_store_fred_series(session, ind.symbol, ind.name, ind.frequency or "Monthly")
+                    elif ind.source == "YAHOO":
+                        await fetch_and_store_market_data(session, ind.symbol)
+                    elif ind.source == "WORLDBANK":
+                        parts = ind.symbol.split("_", 2)
+                        if len(parts) == 3:
+                            _, country, wb_id = parts
+                            await fetch_world_bank_data(session, country, wb_id, ind.name)
+                    elif ind.source == "ECB":
+                        await fetch_and_store_ecb_data(session, ind.symbol)
+                    elif ind.source == "DBNOMICS":
+                        await fetch_and_store_dbnomics_data(session, ind.symbol)
+                    elif ind.source == "IMF":
+                        await fetch_and_store_imf_data(session, ind.symbol)
+                    elif ind.source == "OECD":
+                        await fetch_and_store_oecd_data(session, ind.symbol)
+                    elif ind.source == "BIS":
+                        await fetch_and_store_bis_data(session, ind.symbol)
+                    elif ind.source == "EUROSTAT":
+                        await fetch_and_store_eurostat_data(session, ind.symbol)
+                    elif ind.source == "ALPHAVANTAGE":
+                        await fetch_and_store_alphavantage(session, ind.symbol)
+                    elif ind.source == "ILO":
+                        await fetch_and_store_ilo_data(session, ind.symbol)
+                    elif ind.source == "TREASURY":
+                        await fetch_and_store_treasury_data(session, ind.symbol)
+                    elif ind.source == "FAO":
+                        await fetch_and_store_fao_data(session, ind.symbol)
+                    elif ind.source == "UN":
+                        await fetch_and_store_un_data(session, ind.symbol)
+                except Exception as e:
+                    print(f"[bulk-refresh] خطا در {sym}: {e}")
+                import asyncio
+                await asyncio.sleep(1)
+
+    background_tasks.add_task(_run_bulk)
+    return {"success": True, "queued": len(clean), "message": f"رفرش {len(clean)} شاخص در پس‌زمینه آغاز شد."}
+
+
 @router.put("/symbols/{symbol}/interval")
 async def update_symbol_interval(symbol: str, request: UpdateIntervalRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
@@ -426,6 +557,27 @@ async def update_symbol_interval(symbol: str, request: UpdateIntervalRequest, db
     await db.commit()
 
     return {"success": True, "message": f"بازه آپدیت نماد {symbol} به {request.update_interval_days} روز تغییر یافت."}
+
+
+@router.delete("/symbols/{symbol}")
+async def delete_indicator(symbol: str, data_only: bool = False, db: AsyncSession = Depends(get_db)):
+    """حذف یک شاخص (و در صورت لزوم داده‌های آن) از دیتابیس."""
+    result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    if not indicator:
+        raise HTTPException(status_code=404, detail="نماد یافت نشد")
+
+    await db.execute(delete(EconomicData).where(EconomicData.indicator_id == indicator.id))
+    if not data_only:
+        await db.delete(indicator)
+    else:
+        indicator.last_updated = None
+        db.add(indicator)
+
+    await db.commit()
+    if data_only:
+        return {"success": True, "message": f"داده‌های {symbol} پاک شد؛ تعریف شاخص حفظ شد."}
+    return {"success": True, "message": f"شاخص {symbol} و تمام داده‌هایش حذف شد."}
 
 
 @router.post("/symbols/{symbol}/refresh-now")
@@ -545,7 +697,7 @@ async def combine_indicators_data(
             elif operation == "mul":
                 val = v1 * v2
             else:
-                val = v1 / v2 if v2 != 0 else 0
+                val = v1 / v2 if v2 != 0 else float("nan")
 
             combined_data.append({"date": str(d), "value": round(val, 4)})
         except Exception:
@@ -556,6 +708,7 @@ async def combine_indicators_data(
 
 @router.post("/lab/formula")
 async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Depends(get_db)):
+    import ast
     import math
 
     series_data: Dict[str, Dict[Any, float]] = {}
@@ -577,12 +730,31 @@ async def compute_custom_formula(request: FormulaRequest, db: AsyncSession = Dep
     common_dates = sorted(list(common_dates))
 
     safe_math_env = {k: getattr(math, k) for k in dir(math) if not k.startswith("__")}
+    all_var_names = set(request.variables.keys()) | set(safe_math_env.keys())
+
+    try:
+        tree = ast.parse(request.formula, mode="eval")
+        ALLOWED_NODES = (
+            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name,
+            ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow,
+            ast.USub, ast.UAdd, ast.Mod, ast.Load, ast.keyword,
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, ALLOWED_NODES):
+                raise HTTPException(status_code=400, detail=f"عملگر غیرمجاز در فرمول: {type(node).__name__}")
+            if isinstance(node, ast.Name) and node.id not in all_var_names:
+                raise HTTPException(status_code=400, detail=f"متغیر یا تابع ناشناخته: '{node.id}'")
+        compiled = compile(tree, "<formula>", "eval")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"خطای نحوی در فرمول: {exc}") from exc
 
     combined_data = []
     for d in common_dates:
         local_vars = {var_name: series_data[var_name][d] for var_name in request.variables.keys()}
         try:
-            val = eval(request.formula, {"__builtins__": {}}, {**safe_math_env, **local_vars})
+            val = eval(compiled, {"__builtins__": {}}, {**safe_math_env, **local_vars})
             combined_data.append({"date": str(d), "value": round(val, 4)})
         except Exception:
             continue
@@ -663,12 +835,24 @@ async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = D
     def _cumsum(s: pd.Series) -> pd.Series:
         return s.cumsum()
 
+    def _rolling_median(s: pd.Series, n: int = 12) -> pd.Series:
+        return s.rolling(window=n, min_periods=1).median()
+
+    def _ewm(s: pd.Series, span: int = 12) -> pd.Series:
+        return s.ewm(span=span, adjust=False).mean()
+
+    def _clip(s: pd.Series, lo: float = None, hi: float = None) -> pd.Series:
+        return s.clip(lower=lo, upper=hi)
+
     env = {
         **_math,
         "lag": _lag,
         "pct_change": _pct_change,
         "rolling_mean": _rolling_mean,
         "rolling_std": _rolling_std,
+        "rolling_median": _rolling_median,
+        "ewm": _ewm,
+        "clip": _clip,
         "normalize": _normalize,
         "zscore": _zscore,
         "diff": _diff,
@@ -676,13 +860,29 @@ async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = D
         "log": lambda s: s.apply(lambda x: math.log(x) if x > 0 else float("nan")),
         "exp": lambda s: s.apply(math.exp),
         "abs": lambda s: s.abs(),
+        "sqrt": lambda s: s.apply(lambda x: math.sqrt(x) if x >= 0 else float("nan")),
     }
 
     col_vars = {col: df[col] for col in df.columns if col in request.variables}
     env.update(col_vars)
 
     try:
-        result = eval(request.formula, {"__builtins__": {}}, env)  # noqa: S307
+        import ast
+        tree = ast.parse(request.formula, mode="eval")
+        # whitelist: فقط عملگرهای ریاضی و نام‌های موجود در env مجاز هستند
+        ALLOWED_NODES = (
+            ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name,
+            ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow,
+            ast.USub, ast.UAdd, ast.Mod, ast.Load, ast.keyword,
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, ALLOWED_NODES):
+                raise ValueError(f"عملگر غیرمجاز در فرمول: {type(node).__name__}")
+            if isinstance(node, ast.Name) and node.id not in env:
+                raise ValueError(f"متغیر یا تابع ناشناخته: '{node.id}'")
+        result = eval(compile(tree, "<formula>", "eval"), {"__builtins__": {}}, env)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"خطا در فرمول: {exc}") from exc
 
@@ -708,6 +908,139 @@ async def compute_advanced_formula(request: ComputeRequest, db: AsyncSession = D
             ]
 
     return {"result": result_list, "series": series_out}
+
+
+@router.post("/lab/correlate")
+async def compute_correlation(request: ComputeRequest, db: AsyncSession = Depends(get_db)):
+    """
+    محاسبه ماتریس همبستگی پیرسون بین تمام سری‌های انتخاب‌شده
+    برمی‌گرداند: ماتریس همبستگی + scatter data برای هر جفت
+    """
+    raw: Dict[str, Dict[date, float]] = {}
+    for var_name, symbol in request.variables.items():
+        raw[var_name] = await _load_series(db, symbol)
+
+    if len(raw) < 2:
+        raise HTTPException(status_code=400, detail="حداقل ۲ متغیر برای همبستگی لازم است.")
+
+    df = pd.DataFrame(raw)
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index().dropna(how="all")
+
+    corr_matrix = df.corr(method="pearson").round(4)
+
+    matrix_out = []
+    for a in corr_matrix.index:
+        for b in corr_matrix.columns:
+            matrix_out.append({
+                "a": a,
+                "b": b,
+                "symbol_a": request.variables.get(a, a),
+                "symbol_b": request.variables.get(b, b),
+                "corr": round(float(corr_matrix.loc[a, b]), 4) if pd.notna(corr_matrix.loc[a, b]) else None,
+            })
+
+    scatter_pairs = {}
+    vars_list = list(request.variables.keys())
+    for i in range(len(vars_list)):
+        for j in range(i + 1, len(vars_list)):
+            a, b = vars_list[i], vars_list[j]
+            pair_df = df[[a, b]].dropna()
+            scatter_pairs[f"{a}_{b}"] = [
+                {"x": round(float(row[a]), 6), "y": round(float(row[b]), 6), "date": str(idx.date())}
+                for idx, row in pair_df.iterrows()
+            ]
+
+    return {
+        "matrix": matrix_out,
+        "variables": request.variables,
+        "n_observations": len(df.dropna()),
+        "scatter": scatter_pairs,
+    }
+
+
+class TagsRequest(BaseModel):
+    tags: Optional[str] = Field(default=None, max_length=200)
+
+
+@router.patch("/symbols/{symbol}/tags")
+async def update_symbol_tags(symbol: str, request: TagsRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    if not indicator:
+        raise HTTPException(status_code=404, detail="نماد یافت نشد")
+    indicator.tags = request.tags.strip() if request.tags else None
+    await db.commit()
+    return {"success": True, "symbol": indicator.symbol, "tags": indicator.tags}
+
+
+@router.get("/export/multi.csv")
+async def export_multi_csv(
+    symbols: str = Query(description="کاما-جدا نمادها مثل FEDFUNDS,UNRATE"),
+    db: AsyncSession = Depends(get_db),
+):
+    """خروجی CSV گسترده برای چندین شاخص با ستون‌های جداگانه."""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()][:20]
+    if not sym_list:
+        raise HTTPException(status_code=400, detail="حداقل یک نماد مشخص کنید.")
+
+    series_data: Dict[str, Dict[date, float]] = {}
+    for sym in sym_list:
+        result = await db.execute(select(Indicator).where(Indicator.symbol == sym))
+        indicator = result.scalar_one_or_none()
+        if not indicator:
+            continue
+        data_res = await db.execute(
+            select(EconomicData).where(EconomicData.indicator_id == indicator.id).order_by(EconomicData.date.asc())
+        )
+        series_data[sym] = {r.date: r.value for r in data_res.scalars().all()}
+
+    all_dates = sorted(set(d for s in series_data.values() for d in s))
+    header = ["date"] + list(series_data.keys())
+    lines = [",".join(header)]
+    for d in all_dates:
+        row_vals = [str(d)] + [str(series_data[sym].get(d, "")) for sym in series_data]
+        lines.append(",".join(row_vals))
+
+    content = "\n".join(lines)
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="export.csv"'},
+    )
+
+
+@router.get("/{symbol}/export.csv")
+async def export_symbol_csv(symbol: str, db: AsyncSession = Depends(get_db)):
+    """خروجی CSV برای یک شاخص."""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
+    indicator = result.scalar_one_or_none()
+    if not indicator:
+        raise HTTPException(status_code=404, detail="شاخص یافت نشد.")
+
+    data_result = await db.execute(
+        select(EconomicData)
+        .where(EconomicData.indicator_id == indicator.id)
+        .order_by(EconomicData.date.asc())
+    )
+    records = data_result.scalars().all()
+
+    lines = ["date,value"]
+    for r in records:
+        lines.append(f"{r.date},{r.value}")
+
+    content = "\n".join(lines)
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{symbol.upper()}.csv"'},
+    )
 
 
 @router.get("/{symbol}")
@@ -742,6 +1075,10 @@ async def get_economic_data(symbol: str, db: AsyncSession = Depends(get_db)):
             "name": indicator.name,
             "symbol": indicator.symbol,
             "source": indicator.source,
+            "frequency": indicator.frequency,
+            "last_updated": indicator.last_updated,
+            "update_interval_days": indicator.update_interval_days,
+            "tags": indicator.tags,
         },
         "total_records": len(chart_data),
         "data": chart_data,

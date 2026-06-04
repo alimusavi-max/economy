@@ -21,8 +21,12 @@ if DATABASE_URL:
     # ساخت موتور ناهمگام دیتابیس (Async Engine)
     engine = create_async_engine(
         DATABASE_URL,
-        echo=False,  # اگر True باشد، تمام کوئری‌های SQL در ترمینال چاپ می‌شود
+        echo=False,
         future=True,
+        pool_size=20,
+        max_overflow=10,
+        pool_recycle=3600,
+        pool_pre_ping=True,
     )
 
     # ساخت Session ساز ناهمگام

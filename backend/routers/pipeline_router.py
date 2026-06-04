@@ -34,19 +34,38 @@ async def run_parallel_ingestion():
     print("🚀 استارت عملیات دریافت موازی دیتا با کانال‌های مجزا...")
     
     tasks = [
+        # WorldBank - اقتصاد کلان
         safe_wb("1W", "NY.GDP.MKTP.CD", "Global GDP (World)"),
         safe_wb("US", "NY.GDP.MKTP.CD", "US GDP"),
         safe_wb("CN", "NY.GDP.MKTP.CD", "China GDP"),
-        
+        safe_wb("DE", "NY.GDP.MKTP.CD", "Germany GDP"),
+        safe_wb("JP", "NY.GDP.MKTP.CD", "Japan GDP"),
+        safe_wb("IR", "NY.GDP.MKTP.CD", "Iran GDP"),
+        safe_wb("1W", "FP.CPI.TOTL.ZG", "World Inflation CPI %"),
+        safe_wb("US", "FP.CPI.TOTL.ZG", "US Inflation CPI %"),
+        # FRED - بازار کار و پول
         safe_fred("UNRATE", "US Unemployment Rate", "Monthly"),
         safe_fred("M2SL", "US M2 Money Supply", "Monthly"),
-        
+        safe_fred("FEDFUNDS", "Federal Funds Rate", "Monthly"),
+        safe_fred("CPIAUCSL", "US CPI All Items", "Monthly"),
+        safe_fred("T10YIE", "10-Year Breakeven Inflation Rate", "Daily"),
+        safe_fred("DGS10", "10-Year Treasury Yield", "Daily"),
+        safe_fred("DEXUSEU", "USD/EUR Exchange Rate", "Daily"),
+        safe_fred("DCOILWTICO", "WTI Crude Oil Price", "Daily"),
+        # بازارهای مالی
         safe_market("CL=F"),
         safe_market("EURUSD=X"),
+        safe_market("GC=F"),
+        safe_market("^GSPC"),
+        safe_market("^DJI"),
+        safe_market("^IXIC"),
+        safe_market("BTC-USD"),
+        safe_market("ETH-USD"),
     ]
     
-    await asyncio.gather(*tasks, return_exceptions=True)
-    print("✅ عملیات موازی بدون هیچ هشداری به پایان رسید!")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    ok = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
+    print(f"✅ عملیات موازی به پایان رسید! {ok}/{len(tasks)} با موفقیت.")
 
 @router.post("/trigger-all")
 async def trigger_all_pipelines(background_tasks: BackgroundTasks):

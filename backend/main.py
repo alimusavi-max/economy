@@ -50,6 +50,12 @@ async def ensure_backward_compatible_schema():
                     "ON indicators (dbnomics_provider)"
                 )
             )
+            await conn.execute(
+                text(
+                    "ALTER TABLE indicators "
+                    "ADD COLUMN IF NOT EXISTS tags VARCHAR(200)"
+                )
+            )
 
 
 async def run_global_scrapers(db: AsyncSession, source: str = "ALL"):
@@ -117,6 +123,16 @@ app.include_router(user_router.router)
 @app.get("/")
 async def root():
     return {"message": "موتور تحلیل اقتصاد جهانی روشن است 🚀"}
+
+
+@app.get("/api/health")
+async def health_check():
+    from datetime import datetime
+    return {
+        "status": "healthy",
+        "database": engine is not None,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
 
 
 @app.post("/api/fetch/fred/{series_id}")
@@ -263,3 +279,17 @@ async def trigger_un_discovery(db: AsyncSession = Depends(get_db)):
 @app.post("/api/fetch/un/{symbol}")
 async def trigger_un_fetch(symbol: str, db: AsyncSession = Depends(get_db)):
     return await fetch_and_store_un_data(session=db, symbol=symbol.upper())
+
+
+@app.post("/api/discover/bis")
+async def trigger_bis_discovery(db: AsyncSession = Depends(get_db)):
+    from services.bis_service import auto_discover_bis_indicators
+    result = await auto_discover_bis_indicators(db)
+    return {"success": True, "new_indicators": result}
+
+
+@app.post("/api/discover/eurostat")
+async def trigger_eurostat_discovery(db: AsyncSession = Depends(get_db)):
+    from services.eurostat_service import auto_discover_eurostat
+    result = await auto_discover_eurostat(db)
+    return {"success": True, "new_indicators": result}
