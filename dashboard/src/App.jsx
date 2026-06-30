@@ -209,6 +209,7 @@ export default function App() {
 
   const [recentActivity, setRecentActivity] = useState([])
   const [topSeries, setTopSeries] = useState([])
+  const [jobs, setJobs] = useState([])
   const [activeTab, setActiveTab] = useState('dashboard')
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchQuery, setQuickSearchQuery] = useState('')
@@ -367,6 +368,30 @@ export default function App() {
     return () => clearInterval(t)
   }, [autoRefreshInterval, loadDashboard, loadUserDashboard, selectedUserId])
 
+  // ── live progress poller for background fetch jobs ──
+  const prevRunningRef = useRef(0)
+  const pollJobs = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API_BASE}/data/jobs/progress`)
+      const list = r.data?.jobs || []
+      setJobs(list)
+      const running = list.filter(j => j.status === 'running').length
+      // وقتی یک job تمام می‌شود، داشبورد را تازه کن
+      if (prevRunningRef.current > 0 && running < prevRunningRef.current) {
+        loadDashboard()
+        if (selectedUserId) loadUserDashboard(selectedUserId)
+      }
+      prevRunningRef.current = running
+    } catch { /* ignore */ }
+  }, [loadDashboard, loadUserDashboard, selectedUserId])
+
+  useEffect(() => {
+    pollJobs()
+    const hasRunning = jobs.some(j => j.status === 'running')
+    const t = setInterval(pollJobs, hasRunning ? 2000 : 8000)
+    return () => clearInterval(t)
+  }, [pollJobs, jobs])
+
   useEffect(() => {
     if (quickSearchTimer.current) clearTimeout(quickSearchTimer.current)
     if (!quickSearchQuery || quickSearchQuery.length < 2) { setQuickSearchResults([]); return }
@@ -427,6 +452,16 @@ export default function App() {
       await loadDashboard()
       if (selectedUserId) await loadUserDashboard(selectedUserId)
     } catch (e) { setMessage(extractErrorMessage(e, 'ارسال دستور ناموفق.'), 'error') }
+  }
+
+  const fetchSourceData = async (source, onlyEmpty = true) => {
+    try {
+      const r = await axios.post(`${API_BASE}/data/sources/${source}/fetch-data`, null, {
+        params: { only_empty: onlyEmpty, limit: 300 },
+      })
+      setMessage(r.data?.message || `دریافت داده‌ی ${source} آغاز شد.`, 'success')
+      pollJobs()
+    } catch (e) { setMessage(extractErrorMessage(e, 'دریافت داده ناموفق بود.'), 'error') }
   }
 
   const changeInterval = async (sym, days) => {
@@ -657,6 +692,25 @@ export default function App() {
 
         {/* ── Toast ── */}
         {_msg?.text && <Toast msg={_msg} onDismiss={() => _setMsg(null)} />}
+
+        {/* ── Live background-job progress strip ── */}
+        {jobs.filter(j => j.status === 'running').map(j => {
+          const pct = j.total > 0 ? Math.round((j.done / j.total) * 100) : 0
+          return (
+            <div key={j.key} className="bg-slate-900/80 border border-cyan-800/50 rounded-xl px-4 py-2.5 flex items-center gap-3">
+              <RefreshCcw size={14} className="text-cyan-400 animate-spin shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-cyan-300 font-medium truncate">{j.label}</span>
+                  <span className="text-slate-400 font-mono shrink-0">{j.done}/{j.total} ({pct}%)</span>
+                </div>
+                <div className="bg-slate-800 rounded-full h-1.5">
+                  <div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            </div>
+          )
+        })}
 
         {/* ── Tabs ── */}
         <nav className="flex items-center gap-2">
@@ -961,7 +1015,7 @@ export default function App() {
         )}
 
         {activeTab === 'sources' && (
-          <SourcesPanel summary={summary} freshness={freshness} runPipeline={runPipeline} setMessage={setMessage} />
+          <SourcesPanel summary={summary} freshness={freshness} runPipeline={runPipeline} setMessage={setMessage} fetchSourceData={fetchSourceData} jobs={jobs} />
         )}
 
         {/* ── Manage ── */}
@@ -1866,7 +1920,7 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
 }
 
 // ── Sources Panel ─────────────────────────────────────────
-function SourcesPanel({ summary, freshness, runPipeline, setMessage }) {
+function SourcesPanel({ summary, freshness, runPipeline, setMessage, fetchSourceData, jobs }) {
   const [busy, setBusy] = useState({})
 
   const sourceStats = useMemo(() => {
@@ -1874,6 +1928,14 @@ function SourcesPanel({ summary, freshness, runPipeline, setMessage }) {
     for (const s of summary?.sources || []) m[s.source] = s
     return m
   }, [summary])
+
+  const jobBySource = useMemo(() => {
+    const m = {}
+    for (const j of jobs || []) {
+      if (j.kind === 'fetch' && j.key?.startsWith('fetch:')) m[j.key.slice(6)] = j
+    }
+    return m
+  }, [jobs])
 
   const staleBySource = useMemo(() => {
     const m = {}
@@ -1886,18 +1948,42 @@ function SourcesPanel({ summary, freshness, runPipeline, setMessage }) {
   const discover = async (cfg) => {
     if (!cfg.discoverPath) return setMessage(`${cfg.label} نیاز به کانفیگ دستی دارد.`, 'warning')
     setBusy(b => ({ ...b, [cfg.key]: true }))
-    try { await runPipeline(cfg.discoverPath, `کاوش ${cfg.label} آغاز شد.`) }
+    try { await runPipeline(cfg.discoverPath, `🔍 شخم زدن ${cfg.label} آغاز شد. نمادها در حال پیدا شدن هستند...`) }
     finally { setBusy(b => ({ ...b, [cfg.key]: false })) }
   }
 
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold">منابع داده جهانی (۱۴ منبع)</h2>
-        <button onClick={() => runPipeline('/discover/auto-spider?source=ALL', 'کاوش همه ۱۴ منبع آغاز شد.')}
-          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 rounded-xl text-sm font-semibold transition-colors">
-          🌍 کاوش همه
-        </button>
+      {/* راهنمای دو مرحله‌ای */}
+      <div className="bg-gradient-to-l from-slate-900 to-slate-900/40 border border-slate-700/60 rounded-2xl p-5">
+        <h2 className="text-lg font-bold mb-1">جمع‌آوری داده در ۲ گام ساده</h2>
+        <p className="text-xs text-slate-500 mb-4">برای هر منبع، اول نمادها را پیدا کن، بعد داده‌هایشان را دریافت کن.</p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div className="bg-slate-950/70 border border-emerald-800/40 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-full bg-emerald-700 text-white text-xs font-bold flex items-center justify-center">۱</span>
+              <span className="font-semibold text-emerald-400">🔍 شخم زدن (پیدا کردن نمادها)</span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">داخل دیتابیس منبع می‌گردد و فهرست شاخص‌ها (نمادها) را پیدا و ثبت می‌کند — ولی هنوز داده‌ای ندارند.</p>
+          </div>
+          <div className="bg-slate-950/70 border border-cyan-800/40 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-full bg-cyan-700 text-white text-xs font-bold flex items-center justify-center">۲</span>
+              <span className="font-semibold text-cyan-400">📥 دریافت دیتا (پر کردن داده‌ها)</span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">برای نمادهای پیداشده، مقادیر تاریخی را از منبع می‌گیرد و در داشبورد قابل نمایش می‌کند.</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button onClick={() => runPipeline('/discover/auto-spider?source=ALL', '🔍 شخم زدن همه‌ی منابع آغاز شد.')}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 rounded-xl text-sm font-semibold transition-colors">
+            🔍 شخم زدن همه منابع
+          </button>
+          <button onClick={() => runPipeline('/pipeline/trigger-all', '📥 دریافت سریع شاخص‌های مهم (GDP، تورم، نرخ بهره، طلا، نفت، ارز، سهام، کریپتو) آغاز شد.')}
+            className="px-4 py-2 bg-cyan-700 hover:bg-cyan-600 rounded-xl text-sm font-semibold transition-colors">
+            ⚡ دریافت سریع شاخص‌های مهم
+          </button>
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -1905,7 +1991,11 @@ function SourcesPanel({ summary, freshness, runPipeline, setMessage }) {
           const s = sourceStats[cfg.key]
           const total = s?.indicators ?? 0
           const withData = s?.indicators_with_data ?? 0
+          const empty = Math.max(0, total - withData)
           const cov = total > 0 ? Math.round((withData / total) * 100) : 0
+          const job = jobBySource[cfg.key]
+          const running = job?.status === 'running'
+          const jobPct = job && job.total > 0 ? Math.round((job.done / job.total) * 100) : 0
           return (
             <div key={cfg.key}
               className="bg-slate-900/80 border border-slate-700/60 rounded-xl p-4 space-y-3 hover:border-slate-600 transition-colors"
@@ -1932,40 +2022,49 @@ function SourcesPanel({ summary, freshness, runPipeline, setMessage }) {
                 </div>
                 <div className="flex justify-between text-[10px] text-slate-700">
                   <span>{withData} دارای داده</span>
-                  {total - withData > 0 && <span>{total - withData} خالی</span>}
+                  {empty > 0 && <span className="text-amber-600/80">{empty} بدون داده</span>}
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-600">هر {cfg.interval}</span>
-                  {staleBySource[cfg.key] > 0 && (
-                    <span className="text-[10px] bg-rose-900/50 text-rose-400 px-1.5 py-0.5 rounded-full">
-                      {staleBySource[cfg.key]} دیرهنگام
+              {/* نوار پیشرفت دریافت داده‌ی زنده */}
+              {job && (
+                <div className="bg-slate-950/80 rounded-lg p-2 space-y-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className={running ? 'text-cyan-400 animate-pulse' : 'text-emerald-400'}>
+                      {running ? `در حال دریافت... ${job.done}/${job.total}` : `تمام شد: ${job.ok} موفق`}
                     </span>
-                  )}
+                    <span className="text-slate-500 font-mono">{jobPct}%</span>
+                  </div>
+                  <div className="bg-slate-800 rounded-full h-1">
+                    <div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${jobPct}%` }} />
+                  </div>
+                  {running && job.current && <div className="text-[9px] text-slate-600 font-mono truncate">{job.current}</div>}
                 </div>
+              )}
+
+              {/* دو دکمه‌ی واضح: شخم + دریافت دیتا */}
+              <div className="grid grid-cols-2 gap-2">
                 <button disabled={!cfg.discoverPath || busy[cfg.key]} onClick={() => discover(cfg)}
-                  className="px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded-lg text-xs transition-colors">
-                  {busy[cfg.key] ? <span className="animate-pulse">در حال کاوش...</span> : 'کاوش'}
+                  className="px-2 py-1.5 bg-emerald-800/70 hover:bg-emerald-700 disabled:opacity-40 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1">
+                  {busy[cfg.key] ? <span className="animate-pulse">شخم...</span> : <>🔍 شخم بزن</>}
                 </button>
+                <button disabled={total === 0 || running} onClick={() => fetchSourceData(cfg.key, true)}
+                  title={total === 0 ? 'اول شخم بزن تا نمادها پیدا شوند' : `دریافت داده برای ${empty || total} شاخص`}
+                  className="px-2 py-1.5 bg-cyan-800/70 hover:bg-cyan-700 disabled:opacity-30 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1">
+                  {running ? <span className="animate-pulse">دریافت...</span> : <>📥 دریافت دیتا</>}
+                </button>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-slate-600">
+                <span>هر {cfg.interval}</span>
+                {staleBySource[cfg.key] > 0 && (
+                  <span className="bg-rose-900/50 text-rose-400 px-1.5 py-0.5 rounded-full">
+                    {staleBySource[cfg.key]} دیرهنگام
+                  </span>
+                )}
               </div>
             </div>
           )
         })}
-      </div>
-
-      <div className="bg-slate-900/60 border border-slate-700/60 rounded-xl p-4 grid sm:grid-cols-3 gap-3 text-xs">
-        {[
-          { step: '۱', title: 'کاوش', color: 'text-emerald-400', text: 'دکمه «کاوش همه» یا کاوش هر منبع جداگانه را بزن' },
-          { step: '۲', title: 'دریافت داده', color: 'text-cyan-400', text: 'از تب مدیریت، دریافت فوری هر شاخص را بزن' },
-          { step: '۳', title: 'داشبورد', color: 'text-indigo-400', text: 'شاخص‌ها را به داشبورد شخصی‌ات اضافه کن' },
-        ].map(({ step, title, color, text }) => (
-          <div key={step} className="bg-slate-950 rounded-xl p-3">
-            <div className={`font-semibold mb-1 ${color}`}>مرحله {step}: {title}</div>
-            <p className="text-slate-400">{text}</p>
-          </div>
-        ))}
       </div>
     </section>
   )
