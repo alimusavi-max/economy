@@ -544,6 +544,95 @@ async def bulk_refresh_symbols(request: BulkSymbolsRequest, background_tasks: Ba
     return {"success": True, "queued": len(clean), "message": f"رفرش {len(clean)} شاخص در پس‌زمینه آغاز شد."}
 
 
+@router.post("/sources/{source}/fetch-data")
+async def fetch_source_data(
+    source: str,
+    background_tasks: BackgroundTasks,
+    only_empty: bool = True,
+    limit: int = Query(300, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+):
+    """دریافت داده برای همه‌ی شاخص‌های یک منبع (به‌صورت پس‌زمینه با ردیابی پیشرفت).
+
+    only_empty=True یعنی فقط شاخص‌هایی که هنوز هیچ داده‌ای ندارند پر می‌شوند.
+    """
+    from database.database import AsyncSessionLocal
+    from services.fetch_dispatch import dispatch_fetch, SUPPORTED_FETCH_SOURCES
+    from services import job_progress
+    import asyncio
+
+    src = source.upper()
+    if src not in SUPPORTED_FETCH_SOURCES:
+        raise HTTPException(status_code=400, detail=f"دریافت داده برای منبع {src} پشتیبانی نمی‌شود.")
+
+    job_key = f"fetch:{src}"
+    if job_progress._jobs.get(job_key, {}).get("status") == "running":
+        raise HTTPException(status_code=409, detail=f"دریافت داده‌ی {src} هم‌اکنون در حال اجراست.")
+
+    # انتخاب شاخص‌های هدف
+    q = select(Indicator).where(Indicator.source == src)
+    if only_empty:
+        sub = select(EconomicData.indicator_id).distinct()
+        q = q.where(Indicator.id.notin_(sub))
+    q = q.limit(limit)
+    rows = (await db.execute(q)).scalars().all()
+    targets = [(r.symbol, r.id) for r in rows]
+
+    if not targets:
+        return {
+            "success": True,
+            "queued": 0,
+            "message": f"شاخص خالی‌ای برای {src} پیدا نشد. ابتدا «شخم بزن» را اجرا کنید." if only_empty
+                       else f"شاخصی برای {src} پیدا نشد.",
+        }
+
+    job_progress.start_job(job_key, "fetch", f"دریافت داده‌ی {src}", total=len(targets))
+
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            for sym, _id in targets:
+                try:
+                    ind = (await session.execute(
+                        select(Indicator).where(Indicator.symbol == sym)
+                    )).scalar_one_or_none()
+                    if not ind:
+                        job_progress.update_job(job_key, current=sym, ok=False)
+                        continue
+                    await dispatch_fetch(session, ind)
+                    job_progress.update_job(job_key, current=sym, ok=True)
+                except Exception as e:
+                    print(f"[fetch-data:{src}] خطا در {sym}: {e}")
+                    job_progress.update_job(job_key, current=sym, ok=False)
+                await asyncio.sleep(0.5)
+        job = job_progress._jobs.get(job_key, {})
+        job_progress.finish_job(
+            job_key,
+            message=f"دریافت داده‌ی {src} تمام شد: {job.get('ok', 0)} موفق، {job.get('failed', 0)} ناموفق.",
+        )
+
+    background_tasks.add_task(_run)
+    return {
+        "success": True,
+        "queued": len(targets),
+        "job_key": job_key,
+        "message": f"دریافت داده برای {len(targets)} شاخص {src} در پس‌زمینه آغاز شد.",
+    }
+
+
+@router.get("/jobs/progress")
+async def get_jobs_progress():
+    """وضعیت زنده‌ی عملیات‌های پس‌زمینه (دریافت داده) را برمی‌گرداند."""
+    from services import job_progress
+    return {"jobs": job_progress.get_all_jobs()}
+
+
+@router.post("/jobs/clear")
+async def clear_jobs_progress():
+    from services import job_progress
+    job_progress.clear_finished()
+    return {"success": True}
+
+
 @router.put("/symbols/{symbol}/interval")
 async def update_symbol_interval(symbol: str, request: UpdateIntervalRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Indicator).where(Indicator.symbol == symbol.upper()))
