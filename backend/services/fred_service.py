@@ -1,16 +1,24 @@
 import os
 from datetime import datetime, date
+from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from database.models import Indicator, EconomicData
 import httpx
 
+load_dotenv()
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 
 async def fetch_and_store_fred_series(session: AsyncSession, series_id: str, name: str, frequency: str):
     print(f"در حال دریافت {name} ({series_id})...")
-    
+
+    if not FRED_API_KEY:
+        return {
+            "success": False,
+            "message": "کلید FRED تنظیم نشده است. متغیر FRED_API_KEY را در فایل backend/.env قرار دهید (کلید رایگان از fred.stlouisfed.org).",
+        }
+
     url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json"
     
     # اضافه کردن هدر مرورگر واقعی برای جلوگیری از بلاک شدن توسط فایروال FRED

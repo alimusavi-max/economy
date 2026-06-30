@@ -81,17 +81,35 @@ async def auto_discover_ecb(session: AsyncSession):
     return 0
 
 async def fetch_and_store_ecb_data(session: AsyncSession, symbol: str):
-    """دانلود دیتای تاریخی از سرورهای بانک مرکزی اروپا"""
+    """دانلود دیتای تاریخی از سرورهای بانک مرکزی اروپا.
+
+    برای ۷ نماد منتخب (ECB_DFR و ...) از کلید SDMX دقیق استفاده می‌شود.
+    برای سایر نمادهای کشف‌شده (ECB_<flow_id>) کل dataflow دریافت و
+    نماینده‌ترین سری (طولانی‌ترین) ذخیره می‌شود.
+    """
     symbol = symbol.upper()
-    if symbol not in ECB_SDMX_KEYS:
-        return {"success": False, "message": "این نماد در لیست کلیدهای معتبر ECB یافت نشد."}
+
+    if symbol in ECB_SDMX_KEYS:
+        # نمادهای منتخب: یک سری مشخص و تک‌مقداری
+        sdmx_path = ECB_SDMX_KEYS[symbol]
+        pick_representative = False
+    elif symbol.startswith("ECB_"):
+        # نماد کشف‌شده در سطح dataflow؛ کل مجموعه را می‌گیریم و یک سری را برمی‌گزینیم
+        flow_id = symbol[4:].strip()
+        if not flow_id:
+            return {"success": False, "message": "نماد ECB نامعتبر است."}
+        sdmx_path = flow_id
+        pick_representative = True
+    else:
+        return {"success": False, "message": "نماد معتبر ECB نیست."}
 
     print(f"در حال دانلود دیتای {symbol} از بانک مرکزی اروپا...")
-    sdmx_key = ECB_SDMX_KEYS[symbol]
-    
-    # استفاده از فرمت csvdata برای دریافت سبک و سریع اطلاعات از ECB
-    url = f"https://data-api.ecb.europa.eu/service/data/{sdmx_key}?format=csvdata"
-    
+
+    # lastNObservations برای جلوگیری از دانلود حجیم dataflowهای بزرگ
+    url = f"https://data-api.ecb.europa.eu/service/data/{sdmx_path}?format=csvdata"
+    if pick_representative:
+        url += "&detail=dataonly"
+
     success = False
     for attempt in range(3):
         try:
@@ -116,30 +134,54 @@ async def fetch_and_store_ecb_data(session: AsyncSession, symbol: str):
     if not indicator:
         return {"success": False, "message": "ابتدا باید این شاخص را توسط کاوشگر کشف کنید."}
 
-    records_to_insert = []
-    for row in reader:
+    def _parse_date(date_str):
+        s = date_str.strip()
         try:
-            # ستون TIME_PERIOD تاریخ است و OBS_VALUE مقدار آن
-            date_str = row.get('TIME_PERIOD')
-            value_str = row.get('OBS_VALUE')
+            if len(s) == 4:            # سالانه: 2023
+                return date(int(s), 1, 1)
+            if len(s) == 7 and "-Q" in s.upper():  # فصلی: 2023-Q1
+                y, q = s.upper().split("-Q")
+                return date(int(y), (int(q) - 1) * 3 + 1, 1)
+            if len(s) == 7:            # ماهانه: 2023-01
+                return datetime.strptime(s + "-01", "%Y-%m-%d").date()
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return None
 
-            if not date_str or not value_str:
-                continue
-
-            # گاهی تاریخ‌ها ماهانه (2023-01) هستند، روز اول ماه در نظر می‌گیریم
-            if len(date_str) == 7:
-                date_str += "-01"
-
-            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-            value = float(value_str)
-
-            records_to_insert.append({
-                "indicator_id": indicator.id,
-                "date": date_obj,
-                "value": value,
-            })
-        except Exception as e:
+    # گروه‌بندی ردیف‌ها بر اساس کلید سری؛ ستون KEY هر سری را یکتا می‌کند
+    series_rows: dict = {}
+    for row in reader:
+        date_str = row.get('TIME_PERIOD') or row.get('TIME_PERIOD ')
+        value_str = row.get('OBS_VALUE')
+        if not date_str or value_str in (None, ""):
             continue
+        d = _parse_date(date_str)
+        if d is None:
+            continue
+        try:
+            value = float(value_str)
+        except (ValueError, TypeError):
+            continue
+        key = row.get('KEY') or row.get('SERIES_KEY') or symbol
+        series_rows.setdefault(key, []).append((d, value))
+
+    if not series_rows:
+        return {"success": False, "message": f"داده‌ای برای {symbol} از ECB یافت نشد."}
+
+    if pick_representative:
+        # نماینده‌ترین سری = سری با بیشترین تعداد مشاهده
+        best_key = max(series_rows, key=lambda k: len(series_rows[k]))
+        chosen = series_rows[best_key]
+        if best_key != symbol:
+            indicator.name = f"{indicator.name} [{best_key}]"[:255]
+    else:
+        # نمادهای منتخب فقط یک سری دارند
+        chosen = [pt for pts in series_rows.values() for pt in pts]
+
+    records_to_insert = [
+        {"indicator_id": indicator.id, "date": d, "value": v}
+        for d, v in chosen
+    ]
 
     inserted_count = 0
     batch_size = 3000

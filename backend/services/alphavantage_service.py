@@ -17,7 +17,13 @@ async def fetch_and_store_alphavantage(session: AsyncSession, symbol: str, asset
     asset_type می تواند STOCK (سهام) یا CRYPTO (ارز دیجیتال) یا FX (جفت ارز) باشد.
     """
     print(f"در حال دریافت دیتای {symbol} از Alpha Vantage...")
-    
+
+    if not ALPHAVANTAGE_API_KEY:
+        return {
+            "success": False,
+            "message": "کلید Alpha Vantage تنظیم نشده است. متغیر ALPHA_VANTAGE_API_KEY را در فایل backend/.env قرار دهید (کلید رایگان از alphavantage.co).",
+        }
+
     # تعیین نوع درخواست بر اساس نوع دارایی
     if asset_type == "STOCK":
         url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=full&apikey={ALPHAVANTAGE_API_KEY}"
@@ -42,9 +48,12 @@ async def fetch_and_store_alphavantage(session: AsyncSession, symbol: str, asset
             if response.status_code == 200:
                 data = response.json()
                 # آلفا ونتیج در صورت رد شدن کلید یا لیمیت شدن پیام ارور در JSON می فرستد
-                if "Error Message" in data or "Note" in data:
+                if "Error Message" in data:
                     print(f"خطای Alpha Vantage: {data}")
-                    return {"success": False, "message": "محدودیت API یا نماد نامعتبر است."}
+                    return {"success": False, "message": f"نماد نامعتبر است: {symbol}"}
+                if "Note" in data or "Information" in data:
+                    print(f"محدودیت Alpha Vantage: {data}")
+                    return {"success": False, "message": "محدودیت نرخ Alpha Vantage (۵ درخواست در دقیقه / ۲۵ در روز برای کلید رایگان). کمی صبر کنید."}
                 if data_key in data:
                     success = True
                     break

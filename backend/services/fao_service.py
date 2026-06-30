@@ -77,9 +77,10 @@ async def fetch_and_store_fao_data(session: AsyncSession, symbol: str):
     domain_code = symbol.replace("FAO_", "", 1)
     print(f"در حال دانلود دیتای {symbol} از FAO...")
 
+    current_year = date.today().year
     url = (
         f"https://www.fao.org/faostat/api/v1/en/data/{domain_code}"
-        f"?area=WLD&elements=all&years=1990:2024&format=json&per_page=50000"
+        f"?area=WLD&elements=all&years=1990:{current_year}&format=json&per_page=50000"
     )
 
     success = False

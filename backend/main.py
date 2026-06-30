@@ -1,6 +1,10 @@
 from contextlib import asynccontextmanager
 from typing import Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import BackgroundTasks, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
@@ -132,6 +136,16 @@ async def health_check():
         "status": "healthy",
         "database": engine is not None,
         "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/api/sources/keys")
+async def sources_key_status():
+    """گزارش می‌دهد کدام منابع به کلید API نیاز دارند و آیا تنظیم شده‌اند."""
+    import os
+    return {
+        "FRED": {"requires_key": True, "configured": bool(os.getenv("FRED_API_KEY"))},
+        "ALPHAVANTAGE": {"requires_key": True, "configured": bool(os.getenv("ALPHA_VANTAGE_API_KEY"))},
     }
 
 

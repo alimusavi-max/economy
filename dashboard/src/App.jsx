@@ -210,6 +210,7 @@ export default function App() {
   const [recentActivity, setRecentActivity] = useState([])
   const [topSeries, setTopSeries] = useState([])
   const [jobs, setJobs] = useState([])
+  const [keyStatus, setKeyStatus] = useState({})
   const [activeTab, setActiveTab] = useState('dashboard')
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchQuery, setQuickSearchQuery] = useState('')
@@ -352,6 +353,9 @@ export default function App() {
 
   // ── effects ──
   useEffect(() => { Promise.all([loadUsers(), loadDashboard()]).catch(() => null) }, [loadDashboard, loadUsers])
+  useEffect(() => {
+    axios.get(`${API_BASE}/sources/keys`).then(r => setKeyStatus(r.data || {})).catch(() => setKeyStatus({}))
+  }, [])
   useEffect(() => {
     if (sourceFilter === 'DBNOMICS') loadDbnomicsProviders().catch(() => null)
     else { setDbnomicsProviderFilter(''); setDbnomicsProviders([]) }
@@ -1015,7 +1019,7 @@ export default function App() {
         )}
 
         {activeTab === 'sources' && (
-          <SourcesPanel summary={summary} freshness={freshness} runPipeline={runPipeline} setMessage={setMessage} fetchSourceData={fetchSourceData} jobs={jobs} />
+          <SourcesPanel summary={summary} freshness={freshness} runPipeline={runPipeline} setMessage={setMessage} fetchSourceData={fetchSourceData} jobs={jobs} keyStatus={keyStatus} />
         )}
 
         {/* ── Manage ── */}
@@ -1920,7 +1924,7 @@ function LabPanel({ symbols, API_BASE, setMessage }) {
 }
 
 // ── Sources Panel ─────────────────────────────────────────
-function SourcesPanel({ summary, freshness, runPipeline, setMessage, fetchSourceData, jobs }) {
+function SourcesPanel({ summary, freshness, runPipeline, setMessage, fetchSourceData, jobs, keyStatus }) {
   const [busy, setBusy] = useState({})
 
   const sourceStats = useMemo(() => {
@@ -1994,6 +1998,8 @@ function SourcesPanel({ summary, freshness, runPipeline, setMessage, fetchSource
           const empty = Math.max(0, total - withData)
           const cov = total > 0 ? Math.round((withData / total) * 100) : 0
           const job = jobBySource[cfg.key]
+          const keyInfo = keyStatus?.[cfg.key]
+          const keyMissing = keyInfo?.requires_key && !keyInfo?.configured
           const running = job?.status === 'running'
           const jobPct = job && job.total > 0 ? Math.round((job.done / job.total) * 100) : 0
           return (
@@ -2002,7 +2008,13 @@ function SourcesPanel({ summary, freshness, runPipeline, setMessage, fetchSource
               style={{ borderLeftWidth: 2, borderLeftColor: cfg.color }}>
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="font-semibold text-sm">{cfg.label}</div>
+                  <div className="font-semibold text-sm flex items-center gap-1.5">
+                    {cfg.label}
+                    {keyMissing && (
+                      <span title="کلید API تنظیم نشده — در فایل backend/.env قرار دهید"
+                        className="text-[9px] bg-amber-900/60 text-amber-400 px-1.5 py-0.5 rounded-full">🔑 کلید لازم</span>
+                    )}
+                  </div>
                   <div className="text-xs text-slate-400 mt-0.5">{cfg.desc}</div>
                 </div>
                 <span className="text-[10px] px-2 py-0.5 rounded-full font-mono shrink-0"
